@@ -231,7 +231,7 @@ for(stock in stocks) {
   # set global defaults for uncertainty
   duncert      <- dataUncert
   sigR         <- sigmaR
-
+  
   # check for common errors
   if (length(btype)==0){
     cat("ERROR: Could not find the stock in the ID input file - check that the stock names match in ID and Catch files and that commas are used (not semi-colon)")
@@ -254,13 +254,13 @@ for(stock in stocks) {
   } else {bt <- NA}
   
   if(is.na(mean(ct.raw))){
-  cat("ERROR: Missing value in Catch data; fill or interpolate\n")  
+    cat("ERROR: Missing value in Catch data; fill or interpolate\n")  
   }
   nyr          <- length(yr) # number of years in the time series
   
   # change catch to 3 years moving average where value is average of past 3 years 
   ct              <- ma(ct.raw)
-
+  
   # initialize vectors for viable r, k, bt, and all in a matrix
   mdat.all    <- matrix(data=vector(),ncol=2+nyr+1)
   
@@ -316,15 +316,15 @@ for(stock in stocks) {
   } else if(min.yr.i > max.yr.i) {
     int.yr    <- yr[min.yr.i-1]
     if(startbio[1]>=0.5 &  (int.yr-start.yr) < (end.yr-int.yr) & 
-         (min.ct/max.ct) > 0.3) intbio <- c(0.2,0.6) else intbio <- c(0.01,0.4)
-    
-    # else use max catch  
+       (min.ct/max.ct) > 0.3) intbio <- c(0.2,0.6) else intbio <- c(0.01,0.4)
+       
+       # else use max catch  
   } else {
     # assume that biomass range in year before maximum catch was high or medium
     int.yr    <- yr[max.yr.i-1]
     intbio    <- if((startbio[1]>=0.5 & (int.yr-start.yr) < (end.yr-int.yr))| # if initial biomass is high, assume same for intermediate
-                      # ((min.ct/max.ct < 0.3 & (max.yr.i - min.yr.i) < 25))) c(0.5,0.9) else c(0.2,0.6) }
-                      (((max.ct-min.ct)/max.ct)/(max.yr.i-min.yr.i) > 0.04)) c(0.5,0.9) else c(0.2,0.6) } # if incease is steep, assume high, else medium
+                    # ((min.ct/max.ct < 0.3 & (max.yr.i - min.yr.i) < 25))) c(0.5,0.9) else c(0.2,0.6) }
+                    (((max.ct-min.ct)/max.ct)/(max.yr.i-min.yr.i) > 0.04)) c(0.5,0.9) else c(0.2,0.6) } # if incease is steep, assume high, else medium
   # end of intbio setting
   
   # final biomass range from input file
@@ -359,7 +359,7 @@ for(stock in stocks) {
   # get random set of r and k from log space distribution 
   ri1 = exp(runif(n, log(start.r[1]), log(start.r[2])))  
   ki1 = exp(runif(n, log(start.k[1]/ri1), log(start.k[2]/ri1)))  
-   #-----------------------------------------------------------------
+  #-----------------------------------------------------------------
   # Plot data and progress
   #-----------------------------------------------------------------
   # check for operating system, open separate window for graphs if Windows
@@ -373,11 +373,11 @@ for(stock in stocks) {
   lines(x=yr,y=ct,col="blue", lwd=1)
   points(x=yr[max.yr.i], y=max.ct, col="red", lwd=2)
   points(x=yr[min.yr.i], y=min.ct, col="red", lwd=2)
-
+  
   # plot r-k graph
   plot(x=ri1, y=ki1, xlim = start.r, ylim = c(start.k[1]/start.r[2],start.k[2]/start.r[1]), log="xy", xlab="r", ylab="k", 
        main="B: Finding viable r-k", pch=".", cex=3, bty="l", col="gray95")
-
+  
   #---------------------------------------------------------------------
   # 1 - Call CMSY-SchaeferMC function to preliminary explore the r-k space
   #---------------------------------------------------------------------
@@ -385,14 +385,14 @@ for(stock in stocks) {
   MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
                      pt=T, duncert=dataUncert)
   mdat.all <- rbind(mdat.all,MCA[[1]])
-  if(length(mdat.all[,1])>=(100))
+  if(length(mdat.all[,1])>=(500))
   {
-    if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
+    if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
+    if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
+    if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
+    if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
+    if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
+    if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
   }
   rv.all   <- mdat.all[,1]
   kv.all   <- mdat.all[,2]
@@ -413,14 +413,14 @@ for(stock in stocks) {
     MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
                        pt=T, duncert=dataUncert)
     mdat.all <- rbind(mdat.all,MCA[[1]])
-    if(length(mdat.all[,1])>=(100))
+    if(length(mdat.all[,1])>=(500))
     {
-      if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
     }
     rv.all   <- mdat.all[,1]
     kv.all   <- mdat.all[,2]
@@ -442,13 +442,13 @@ for(stock in stocks) {
       if(n.viable.pt > 0) {
         start.k.new[1] <- exp(mean(c(log(start.k.new[1]), min(log(0.8*(kv.all*rv.all))))))
         start.k.new[2] <- exp(mean(c(log(start.k.new[2]), max(log(1.2*(kv.all*rv.all)))))) }else{
-        start.k.new[1] <- 0.5*start.k.new[1]
-        start.k.new[2] <- 1.5*start.k.new[2]   
+          start.k.new[1] <- 0.5*start.k.new[1]
+          start.k.new[2] <- 1.5*start.k.new[2]   
         }
       n.new <- n*current.attempts #add more points
       ri1 = exp(runif(n.new, log(start.r[1]), log(start.r[2])))  
       ki1 = exp(runif(n.new, log(start.k.new[1]/ri1), log(start.k.new[2]/ri1)))
-      cat("Shrinking k space: repeating Monte Carlo in the interval [",exp(log.start.k.new[1]),",",exp(log.start.k.new[2]),"]\n")
+      cat("Shrinking k space: repeating Monte Carlo in the interval [",(start.k.new[1]/start.r[2]),",",(start.k.new[2]/start.r[1]),"]\n")
       cat("Attempt ",current.attempts," of ",max.attempts," with ",n.new," additional points...","\n")
       if(current.attempts==2 & n.viable.b < 50){
         duncert   <- 2*dataUncert
@@ -459,14 +459,14 @@ for(stock in stocks) {
       MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
                          pt=T, duncert=duncert)
       mdat.all <- rbind(mdat.all,MCA[[1]])
-      if(length(mdat.all[,1])>=(100))
+      if(length(mdat.all[,1])>=(500))
       {
-        if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
+        if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
+        if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
+        if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
+        if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
+        if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
+        if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
       }
       rv.all   <- mdat.all[,1]
       kv.all   <- mdat.all[,2]
@@ -489,21 +489,21 @@ for(stock in stocks) {
     l.sample.r        <- quantile(rv.all,0.6)
     add.points        <- ifelse(is.na(current.attempts)==T,n,ifelse(current.attempts==2,2*n,ifelse(length(rv.all)>500,3*n,6*n)))
     cat("Final sampling in the tip area above r =",l.sample.r,"with",add.points,"additional points...\n")
-    start.k.new <- c((0.8*min(kv.all*rv.all)),(1.2*max(kv.all/rv.all)))
+    start.k.new <- c((0.8*min(kv.all*rv.all)),(1.2*max(kv.all*rv.all)))
     
     ri1 = exp(runif(add.points, log(l.sample.r), log(start.r[2])))  
     ki1 = exp(runif(add.points, log(start.k.new[1]/ri1), log(start.k.new[2]/ri1)))
     MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
                        pt=T, duncert=duncert)
     mdat.all <- rbind(mdat.all,MCA[[1]])
-    if(length(mdat.all[,1])>=(100))
+    if(length(mdat.all[,1])>=(500))
     {
-      if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(100)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
     }
     rv.all   <- mdat.all[,1]
     kv.all   <- mdat.all[,2]
@@ -512,7 +512,7 @@ for(stock in stocks) {
     n.viable.pt <- length(unique(mdat.all[,1]))
     cat("Found altogether",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
   }
-
+  
   time.end<-proc.time()[3]
   test.runtime.New[trt]<-(time.end-time.start)
   
