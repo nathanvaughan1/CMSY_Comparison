@@ -195,8 +195,11 @@ if(is.na(stocks[1])==TRUE){
   # stocks         <- as.character(cinfo$Stock[cinfo$Subregion=="Sardinia"]) # Analyze stocks in Region
 }
 
+test.runtime.Vect<-vector(length=length(stocks))
+trt<-0
 # analyze one stock after the other
 for(stock in stocks) {
+  trt<-trt+1
   cat("Processing",stock,",", as.character(cinfo$ScientificName[cinfo$Stock==stock]),"\n")
   # assign data from cinfo to vectors
   res          <- as.character(cinfo$Resilience[cinfo$Stock==stock])
@@ -339,6 +342,7 @@ for(stock in stocks) {
       ", intbio=",int.yr,intbio,ifelse(is.na(intb.low)==T,"default","expert"),
       ", endbio=",endbio,ifelse(is.na(endb.low)==T,"default","expert"),"\n")
   
+  time.start<-proc.time()[3]
   #------------------------------------------------------------------
   # Uniform sampling of the r-k space
   #------------------------------------------------------------------
@@ -461,6 +465,9 @@ for(stock in stocks) {
     cat("Found altogether",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
   }
 
+  time.end<-proc.time()[3]
+  test.runtime.Vect[trt]<-(time.end-time.start)
+  
   # ------------------------------------------------------------------
   # Bayesian analysis of catch & biomass (or CPUE) with Schaefer model
   # ------------------------------------------------------------------
