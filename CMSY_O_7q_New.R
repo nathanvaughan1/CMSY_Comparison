@@ -343,8 +343,8 @@ for(stock in stocks) {
   
   # initial prior range of k values, assuming min k will be larger than max catch / prior for r 
   if(mean(endbio) <= 0.5) {
-    start.k <- c(max(ct)/start.r[2],4*max(ct)/start.r[1])} else {
-      start.k <- c(2*max(ct)/start.r[2],12*max(ct)/start.r[1])} 
+    start.k <- c(mean(ct),6*mean(ct))} else {
+      start.k <- c(2*max(ct),12*max(ct))} 
   # start.k <- c(start.k[1],3000)   
   cat("startbio=",startbio,ifelse(is.na(stb.low)==T,"default","expert"),
       ", intbio=",int.yr,intbio,ifelse(is.na(intb.low)==T,"default","expert"),
@@ -355,7 +355,7 @@ for(stock in stocks) {
   #------------------------------------------------------------------
   # get random set of r and k from log space distribution 
   ri1 = exp(runif(n, log(start.r[1]), log(start.r[2])))  
-  ki1 = exp(runif(n, log(start.k[1]), log(start.k[2])))  
+  ki1 = exp(runif(n, log(start.k[1]/ri1), log(start.k[2]/ri1)))  
    #-----------------------------------------------------------------
   # Plot data and progress
   #-----------------------------------------------------------------
@@ -372,7 +372,7 @@ for(stock in stocks) {
   points(x=yr[min.yr.i], y=min.ct, col="red", lwd=2)
 
   # plot r-k graph
-  plot(x=ri1, y=ki1, xlim = start.r, ylim = start.k, log="xy", xlab="r", ylab="k", 
+  plot(x=ri1, y=ki1, xlim = start.r, ylim = c(start.k[1]/start.r[2],start.k[2]/start.r[1]), log="xy", xlab="r", ylab="k", 
        main="B: Finding viable r-k", pch=".", cex=3, bty="l", col="gray95")
 
   #---------------------------------------------------------------------
@@ -402,11 +402,11 @@ for(stock in stocks) {
   #----------------------------------------------------------------------- 
   # 2 - if the lower bound of k is too high, reduce it by half and rerun
   #-----------------------------------------------------------------------
-  if(length(kv.all[kv.all < 1.1*start.k[1] & rv.all < mean(start.r)]) > 10) {
+  if(length(kv.all[kv.all < 1.1*start.k[1]/rv.all & rv.all < mean(start.r)]) > 10) {
     cat("Reducing lower bound of k, resampling area with",n,"additional points...\n")
     start.k <- c(0.5*start.k[1],start.k[2])
     ri1 = exp(runif(n, log(start.r[1]), log(start.r[2])))  
-    ki1 = exp(runif(n, log(start.k[1]), log(start.k[2])))  
+    ki1 = exp(runif(n, log(start.k[1]/ri1), log(start.k[2]/ri1)))  
     MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
                        pt=T, duncert=dataUncert)
     mdat.all <- rbind(mdat.all,MCA[[1]])
@@ -431,17 +431,20 @@ for(stock in stocks) {
   # 3 - if few points were found then resample and shrink the log k space
   #-------------------------------------------------------------------
   if (n.viable.b <= 1000){
-    log.start.k.new  <- log(start.k) 
+    start.k.new  <- start.k
     max.attempts     <- 3
     current.attempts <- 1
     startbins        <- 10  
     while (n.viable.b <= 1000 && current.attempts <= max.attempts){
       if(n.viable.pt > 0) {
-        log.start.k.new[1] <- mean(c(log(start.k[1]), min(log(kv.all))))
-        log.start.k.new[2] <- mean(c(log.start.k.new[2], max(log(kv.all)))) }
+        start.k.new[1] <- exp(mean(c(log(start.k.new[1]), min(log(0.8*(kv.all*rv.all))))))
+        start.k.new[2] <- exp(mean(c(log(start.k.new[2]), max(log(1.2*(kv.all*rv.all)))))) }else{
+        start.k.new[1] <- 0.5*start.k.new[1]
+        start.k.new[2] <- 1.5*start.k.new[2]   
+        }
       n.new <- n*current.attempts #add more points
       ri1 = exp(runif(n.new, log(start.r[1]), log(start.r[2])))  
-      ki1 = exp(runif(n.new, log.start.k.new[1], log.start.k.new[2]))
+      ki1 = exp(runif(n.new, log(start.k.new[1]/ri1), log(start.k.new[2]/ri1)))
       cat("Shrinking k space: repeating Monte Carlo in the interval [",exp(log.start.k.new[1]),",",exp(log.start.k.new[2]),"]\n")
       cat("Attempt ",current.attempts," of ",max.attempts," with ",n.new," additional points...","\n")
       if(current.attempts==2 & n.viable.b < 50){
@@ -483,10 +486,10 @@ for(stock in stocks) {
     l.sample.r        <- quantile(rv.all,0.6)
     add.points        <- ifelse(is.na(current.attempts)==T,n,ifelse(current.attempts==2,2*n,ifelse(length(rv.all)>500,3*n,6*n)))
     cat("Final sampling in the tip area above r =",l.sample.r,"with",add.points,"additional points...\n")
-    log.start.k.new <- c(log(0.8*min(kv.all)),log(max(kv.all[rv.all > l.sample.r])))
+    start.k.new <- c((0.8*min(kv.all*rv.all)),(1.2*max(kv.all/rv.all)))
     
     ri1 = exp(runif(add.points, log(l.sample.r), log(start.r[2])))  
-    ki1 = exp(runif(add.points, log.start.k.new[1], log.start.k.new[2]))
+    ki1 = exp(runif(add.points, log(start.k.new[1]/ri1), log(start.k.new[2]/ri1)))
     MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
                        pt=T, duncert=duncert)
     mdat.all <- rbind(mdat.all,MCA[[1]])
