@@ -3,7 +3,6 @@
 ## Original Written by Rainer Froese, Gianpaolo Coro and Henning Winker
 ## CMSY modified for vectorization by Nathan Vaughan
 ## Version of July 2017
-## Note that time series excluding 2004 - 2010 will give an error in dataframe; set write.output <- F to avoid that error
 ## Version CMSY_O_7q_Vectorized.R
 ##---------------------------------------------------------------------------------------------
 library(R2jags)  # Interface with JAGS
@@ -1172,6 +1171,23 @@ if (save.plots==TRUE & mgraphs==TRUE)
 # -------------------------------------
 if(write.output == TRUE) {
   
+  #Modification to allow data to be missing in any years
+  ct.raw.ext<-ct.raw
+  F.Fmsy.ext<-F.Fmsy
+  B.ext<-B
+  yr.ext<-yr
+  if(min(yr)>2000){
+    ct.raw.ext<-c(rep(NA,(min(yr)-2000)),ct.raw.ext)
+    F.Fmsy.ext<-c(rep(NA,(min(yr)-2000)),F.Fmsy.ext)
+    B.ext<-c(rep(NA,(min(yr)-2000)),B.ext)
+    yr.ext<-c(2000:(min(yr)-1),yr.ext)
+  }
+  if(max(yr)<2015){
+    ct.raw.ext<-c(ct.raw.ext,rep(NA,(2015-max(yr))))
+    F.Fmsy.ext<-c(F.Fmsy.ext,rep(NA,(2015-max(yr))))
+    B.ext<-c(B.ext,rep(NA,(2015-max(yr))))
+    yr.ext<-c(yr.ext,(max(yr)+1):2015)
+  }
   # write data into csv file
   output = data.frame(as.character(cinfo$Group[cinfo$Stock==stock]),
                       as.character(cinfo$Region[cinfo$Stock==stock]),
@@ -1209,16 +1225,16 @@ if(write.output == TRUE) {
                       ifelse(is.na(sel.yr)==F,B.Bmsy.sel,NA),
                       ifelse(is.na(sel.yr)==F,F.sel,NA),
                       ifelse(is.na(sel.yr)==F,F.Fmsy.sel,NA),
-                      ifelse(yr[1]>2000,NA,ct.raw[yr==2000]),ifelse(yr[1]>2001,NA,ct.raw[yr==2001]),ifelse(yr[1]>2002,NA,ct.raw[yr==2002]), ifelse(yr[1]>2003,NA,ct.raw[yr==2003]),# allow missing 2000-2002
-                      ct.raw[yr==2004],ct.raw[yr==2005],ct.raw[yr==2006],ct.raw[yr==2007],ct.raw[yr==2008],ct.raw[yr==2009],ct.raw[yr==2010],
-                      ifelse(yr[nyr]<2011,NA,ct.raw[yr==2011]),ifelse(yr[nyr]<2012,NA,ct.raw[yr==2012]),ifelse(yr[nyr]<2013,NA,ct.raw[yr==2013]),ifelse(yr[nyr]<2014,NA,ct.raw[yr==2014]),ifelse(yr[nyr]<2015,NA,ct.raw[yr==2015]), # allow missing 2011-2015
-                      ifelse(yr[1]>2000,NA,F.Fmsy[yr==2000]),ifelse(yr[1]>2001,NA,F.Fmsy[yr==2001]),ifelse(yr[1]>2002,NA,F.Fmsy[yr==2002]),ifelse(yr[1]>2003,NA,F.Fmsy[yr==2003]), # allow missing 2000-2002
-                      F.Fmsy[yr==2004],F.Fmsy[yr==2005],F.Fmsy[yr==2006],F.Fmsy[yr==2007],F.Fmsy[yr==2008],F.Fmsy[yr==2009],F.Fmsy[yr==2010],
-                      ifelse(yr[nyr]<2011,NA,F.Fmsy[yr==2011]),ifelse(yr[nyr]<2012,NA,F.Fmsy[yr==2012]),ifelse(yr[nyr]<2013,NA,F.Fmsy[yr==2013]),ifelse(yr[nyr]<2014,NA,F.Fmsy[yr==2014]),ifelse(yr[nyr]<2015,NA,F.Fmsy[yr==2015]),# allow missing 2011-2015
-                      ifelse(yr[1]>2000,NA,B[yr==2000]),ifelse(yr[1]>2001,NA,B[yr==2001]),ifelse(yr[1]>2002,NA,B[yr==2002]),ifelse(yr[1]>2003,NA,B[yr==2003]), # allow missing 2000-2002
-                      B[yr==2004],B[yr==2005],B[yr==2006],B[yr==2007],B[yr==2008],B[yr==2009],B[yr==2010],
-                      ifelse(yr[nyr]<2011,NA,B[yr==2011]),ifelse(yr[nyr]<2012,NA,B[yr==2012]),ifelse(yr[nyr]<2013,NA,B[yr==2013]),ifelse(yr[nyr]<2014,NA,B[yr==2014]),ifelse(yr[nyr]<2015,NA,B[yr==2015])) # allow missing 2011-2015
-                      
+                      ct.raw.ext[yr.ext==2000],ct.raw.ext[yr.ext==2001],ct.raw.ext[yr.ext==2002],ct.raw.ext[yr.ext==2003],
+                      ct.raw.ext[yr.ext==2004],ct.raw.ext[yr.ext==2005],ct.raw.ext[yr.ext==2006],ct.raw.ext[yr.ext==2007],ct.raw.ext[yr.ext==2008],ct.raw.ext[yr.ext==2009],ct.raw.ext[yr.ext==2010],
+                      ct.raw.ext[yr.ext==2011],ct.raw.ext[yr.ext==2012],ct.raw.ext[yr.ext==2013],ct.raw.ext[yr.ext==2014],ct.raw.ext[yr.ext==2015],
+                      F.Fmsy.ext[yr.ext==2000],F.Fmsy.ext[yr.ext==2001],F.Fmsy.ext[yr.ext==2002],F.Fmsy.ext[yr.ext==2003],
+                      F.Fmsy.ext[yr.ext==2004],F.Fmsy.ext[yr.ext==2005],F.Fmsy.ext[yr.ext==2006],F.Fmsy.ext[yr.ext==2007],F.Fmsy.ext[yr.ext==2008],F.Fmsy.ext[yr.ext==2009],F.Fmsy.ext[yr.ext==2010],
+                      F.Fmsy.ext[yr.ext==2011],F.Fmsy.ext[yr.ext==2012],F.Fmsy.ext[yr.ext==2013],F.Fmsy.ext[yr.ext==2014],F.Fmsy.ext[yr.ext==2015],
+                      B.ext[yr.ext==2000],B.ext[yr.ext==2001],B.ext[yr.ext==2002],B.ext[yr.ext==2003],
+                      B.ext[yr.ext==2004],B.ext[yr.ext==2005],B.ext[yr.ext==2006],B.ext[yr.ext==2007],B.ext[yr.ext==2008],B.ext[yr.ext==2009],B.ext[yr.ext==2010],
+                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015]) 
+  
   write.table(output, file=outfile, append = T, sep = ",", 
               dec = ".", row.names = FALSE, col.names = FALSE)
   
