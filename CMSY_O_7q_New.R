@@ -5,8 +5,6 @@
 ## Version of July 2017
 ## Version CMSY_O_7q_new.R
 ##---------------------------------------------------------------------------------------------
-library(R2jags)  # Interface with JAGS
-library(coda) 
 library("parallel")
 library("foreach")
 library("doParallel")
@@ -34,13 +32,19 @@ id_file     <-  "O_Stocks_ID_18_Med.csv"  #  name of file containing stock-speci
 outfile     <- paste("Out_",format(Sys.Date(),format="%B%d%Y_"),id_file,sep="") # default name for output file
 outfile.txt <- paste(outfile,".txt", sep="") 
 
+# Read data
+cdat         <- read.csv(catch_file, header=T, dec=".", stringsAsFactors = FALSE)
+cinfo        <- read.csv(id_file, header=T, dec=".", stringsAsFactors = FALSE)
+cat("Files", catch_file, ",", id_file, "read successfully","\n")
+
 #----------------------------------------
 # Select stock to be analyzed
 #----------------------------------------
 stocks      <-NA
 # If the input files contain more than one stock, specify below the stock to be analyzed
-# If the line below is commented out (#), all stocks in the input file will be analyzed
-# stocks <-  "SARDPIL_SA_EXAMPLE" # c("SEPIOFF_CY","MICRPOU_IS","EPINGUA_IS","CHAMGAL_SA","CORYHIP_SA","ILLECOI_SA")
+# If the 2 lines below are commented out (#), all stocks in the input file will be analyzed
+stocks <- as.character(cinfo$Stock)
+stocks <- stocks[c(1:19,21:length(stocks))] # c("SEPIOFF_CY","MICRPOU_IS","EPINGUA_IS","CHAMGAL_SA","CORYHIP_SA","ILLECOI_SA")
 
 #-----------------------------------------
 # General settings for the analysis
@@ -53,10 +57,17 @@ ni           <- 3 # iterations for r-k-startbiomass combinations, to test differ
 nab          <- 2 # default=5; minimum number of years with abundance data to run BSM
 mgraphs      <- T # set to TRUE to produce additional graphs for management
 save.plots   <- T # set to TRUE to save graphs to JPEG files
-close.plots  <- F # set to TRUE to close on-screen plots after they are saved, to avoid "too many open devices" error in batch-processing
+close.plots  <- T # set to TRUE to close on-screen plots after they are saved, to avoid "too many open devices" error in batch-processing
 write.output <- T # set to TRUE if table with results in output file is wanted; expects years 2004-2010 to be available
 force.cmsy   <- F # set to TRUE if CMSY results are to be preferred over BSM results
 select.yr    <- NA # option to display F, B, F/Fmsy and B/Bmsy for a certain year; default NA
+run.bsm      <- F # set to TRUE if you want to run BSM model
+
+if(run.bsm)
+{
+  library(R2jags)  # Interface with JAGS
+  library(coda) 
+}
 
 #----------------------------------------------
 #  FUNCTIONS
@@ -64,7 +75,7 @@ select.yr    <- NA # option to display F, B, F/Fmsy and B/Bmsy for a certain yea
 # Monte Carlo filtering with Schaefer Function
 #----------------------------------------------
 
-SchaeferParallelSearch<-function(ri, ki, bi, ct, intbio, endbio, int.yr.i, sigR, duncert, pt){
+SchaeferParallelSearch<-function(ri, ki, bi, ct, intbio, endbio, int.yr.i, sigR, duncert, pt, extended.bounds){
   
   nyr<-length(ct)             
   inmemorytable <- matrix(NA,nrow=0,ncol=(nyr+3))
@@ -88,10 +99,20 @@ SchaeferParallelSearch<-function(ri, ki, bi, ct, intbio, endbio, int.yr.i, sigR,
   clog.sd <- sqrt(log(1+(duncert)^2))
   clog.mu <- log(1/sqrt(1+(duncert)^2))
   
+  s.blog.sd <- sqrt(log(1+(sigR/sqrt(length(ct)-1))^2))
+  s.blog.mu <- log(1/sqrt(1+(sigR/sqrt(length(ct)-1))^2))
+  s.clog.sd <- sqrt(log(1+(duncert/sqrt(length(ct)-1))^2))
+  s.clog.mu <- log(1/sqrt(1+(duncert/sqrt(length(ct)-1))^2))
+  
   #print points if graphing
   if(pt){ points(x=ri, y=ki, pch=".", cex=4, col="gray")}
   
   inmemorytable <- foreach (i = 1 : splits, .combine='rbind', .packages='foreach', .inorder=TRUE) %dopar%{
+    
+    rtnorm<-function(n,mean.val=0,sd.val=1,min.val=-3,max.val=3)
+    {
+      vals<-mean.val+(qnorm(runif(n,pnorm((min.val-mean.val)/sd.val),pnorm((max.val-mean.val)/sd.val))))*sd.val
+    }
     
     range<-(breaks[i]+1):(breaks[i+1])
     biomass<-matrix(nrow=(length(range)),ncol=(3*nyr+3))
@@ -101,10 +122,17 @@ SchaeferParallelSearch<-function(ri, ki, bi, ct, intbio, endbio, int.yr.i, sigR,
     biomass[,2]<-ki[range]
     biomass[,(2*nyr+3)]<-bi[range]
     
+    #Calculate random process error and catch error bounded at +-1.96 standard deviations to prevent anomalies at high sample size
+    biomass[,3:(nyr+2)]<-exp(rtnorm(length(biomass[,1])*nyr,blog.mu,blog.sd,min.val=-1.96*blog.sd,max.val=1.96*blog.sd))# set new process error in population growth for every year.
+    biomass[,(nyr+3):(2*nyr+2)]<-exp(rtnorm(length(biomass[,1])*nyr,clog.mu,clog.sd,min.val=-1.96*clog.sd,max.val=1.96*clog.sd))# model the catch error as a log normal distribution.
+    
+    #Rescale to bound the total catch deviation to +-1.96 standard errors
+    biomass[,3:(nyr+2)]<-biomass[,3:(nyr+2)]*(exp(rtnorm(length(biomass[,1]),s.blog.mu,s.blog.sd,min.val=-1.96*s.blog.sd,max.val=1.96*s.blog.sd))/apply(biomass[,3:(nyr+2)],1,mean))
+    biomass[,(nyr+3):(2*nyr+2)]<-biomass[,(nyr+3):(2*nyr+2)]*(exp(rtnorm(length(biomass[,1]),s.clog.mu,s.clog.sd,min.val=-1.96*s.clog.sd,max.val=1.96*s.clog.sd))/apply(biomass[,(nyr+3):(2*nyr+2)],1,mean))
+    
     #Loop over years to calculate biomass series
     for (t in 1:nyr)  { 
-      biomass[,(t+2)]<-rlnorm(length(biomass[,1]),blog.mu, blog.sd) # set new process error in population growth for every year  
-      biomass[,(t+nyr+2)]<-rlnorm(length(biomass[,1]),meanlog = clog.mu, sdlog = clog.sd) # model the catch error as a log normal distribution.
+      #Calculate end of year biomass
       biomass[,(t+2*nyr+3)]<-ifelse(biomass[,(t+2*nyr+2)] >= 0.25,
                                     biomass[,(t+2*nyr+2)]+biomass[,1]*biomass[,(t+2*nyr+2)]*(1-biomass[,(t+2*nyr+2)])*biomass[,(t+2)]-((ct[t])/biomass[,2])*biomass[,(t+nyr+2)],
                                     biomass[,(t+2*nyr+2)]+(4*biomass[,(t+2*nyr+2)])*biomass[,1]*biomass[,(t+2*nyr+2)]*(1-biomass[,(t+2*nyr+2)])*biomass[,(t+2)]-(((ct[t])/biomass[,2]))*biomass[,(t+nyr+2)]) # assuming reduced r at B/k < 0.25
@@ -112,36 +140,40 @@ SchaeferParallelSearch<-function(ri, ki, bi, ct, intbio, endbio, int.yr.i, sigR,
       #remove biomass series where stock collapses
       biomass<-biomass[(!is.na(biomass[,(t+2*nyr+3)])),,drop=FALSE]
       biomass<-biomass[biomass[,(t+2*nyr+3)]>=0.01,,drop=FALSE]
+      
       #remove biomass series where intermittent biomass outside bounds
       if((t+1)==int.yr.i){
-        biomass<-biomass[biomass[,(t+2*nyr+3)]>=(0.5*intbio[1]),,drop=FALSE]
-        biomass<-biomass[biomass[,(t+2*nyr+3)]<=(0.5*intbio[2]+0.5),,drop=FALSE]
+        biomass<-biomass[biomass[,(t+2*nyr+3)]>=(extended.bounds[3]*intbio[1]),,drop=FALSE]
+        biomass<-biomass[biomass[,(t+2*nyr+3)]<=(extended.bounds[4]*intbio[2]+(1-extended.bounds[4])),,drop=FALSE]
       }
     }
+    
     #remove biomass series where end biomass outside bounds
-    biomass<-biomass[biomass[,(3*nyr+3)]>=(0.5*endbio[1]),,drop=FALSE]
-    biomass<-biomass[biomass[,(3*nyr+3)]<=(0.5*endbio[2]+0.5),,drop=FALSE]
+    biomass<-biomass[biomass[,(3*nyr+3)]>=(extended.bounds[5]*endbio[1]),,drop=FALSE]
+    biomass<-biomass[biomass[,(3*nyr+3)]<=(extended.bounds[6]*endbio[2]+(1-extended.bounds[6])),,drop=FALSE]
+    
     #remove duplicate r,K,B[1] combinations (extremely unlikely to happen in this version)
     if(length(biomass[,1])>1)
     {
       biomass<-biomass[!duplicated(biomass[,c(1:2,(2*nyr+3))]),,drop=FALSE]
     }
+    
     # instruction necessary to make the foreach loop see the variable:
     inmemorytable<-biomass[,c(1,2,(2*nyr+3):(3*nyr+3))]
-    
+ 
   }#end parallelization
   
   return(inmemorytable)
 }
 
 
-SchaeferMC <- function(ri, ki, startbio, int.yr, intbio, endbio, sigR, pt, duncert) {
+SchaeferMC <- function(ri, ki, startbio, int.yr, intbio, endbio, sigR, pt, duncert, extended.bounds) {
   
-  bi<-runif(length(ri),(0.5*startbio[1]),(0.5*startbio[2]+0.5))
+  bi<-runif(length(ri),(extended.bounds[1]*startbio[1]),(extended.bounds[2]*startbio[2]+(1-extended.bounds[2])))
   # get index of intermediate year
   int.yr.i     <- which(yr==int.yr) 
   
-  mdat<-SchaeferParallelSearch(ri, ki, bi, ct, intbio, endbio, int.yr.i, sigR, duncert, pt)
+  mdat<-SchaeferParallelSearch(ri, ki, bi, ct, intbio, endbio, int.yr.i, sigR, duncert, pt, extended.bounds)
   
   cat("\n")
   return(list(mdat))
@@ -157,6 +189,12 @@ ma    <- function(x){
   x.1[2] <- (x[1]+x[2])/2
   return(x.1)
 }
+
+#-----------------------------------------------
+# Function drawing bounded random normal
+#-----------------------------------------------
+c
+
 #---------------------------------------------
 # END OF FUNCTIONS
 #---------------------------------------------
@@ -185,16 +223,12 @@ if(write.output==T){
                           "sel_B","sel_B_Bmsy","sel_F","sel_F_Fmsy",
                           "c00","c01","c02","c03","c04","c05","c06","c07","c08","c09","c10","c11","c12","c13","c14","c15",
                           "F.Fmsy00","F.Fmsy01","F.Fmsy02","F.Fmsy03","F.Fmsy04","F.Fmsy05","F.Fmsy06","F.Fmsy07","F.Fmsy08","F.Fmsy09","F.Fmsy10","F.Fmsy11","F.Fmsy12","F.Fmsy13","F.Fmsy14","F.Fmsy15",
-                          "B00","B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12","B13","B14","B15")
+                          "B00","B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12","B13","B14","B15","Runtime","st.bio1.ext","st.bio2.ext","int.bio1.ext","int.bio2.ext","end.bio1.ext","end.bio2.ext")
  
    write.table(outheaders,file=outfile, append = T, sep=",",row.names=F,col.names=F)
 }
 
 cat("Parallel processing will use",ncores_for_computation,"cores\n")
-# Read data
-cdat         <- read.csv(catch_file, header=T, dec=".", stringsAsFactors = FALSE)
-cinfo        <- read.csv(id_file, header=T, dec=".", stringsAsFactors = FALSE)
-cat("Files", catch_file, ",", id_file, "read successfully","\n")
 
 #---------------------------------
 # Analyze stock(s)
@@ -206,10 +240,9 @@ if(is.na(stocks[1])==TRUE){
 }
 
 # analyze one stock after the other
-test.runtime.New<-vector(length=length(stocks))
-trt<-0
+
 for(stock in stocks) {
-  trt<-trt+1
+  set.seed(12345)
   cat("Processing",stock,",", as.character(cinfo$ScientificName[cinfo$Stock==stock]),"\n")
   # assign data from cinfo to vectors
   res          <- as.character(cinfo$Resilience[cinfo$Stock==stock])
@@ -225,13 +258,13 @@ for(stock in stocks) {
   intb.hi      <- as.numeric(cinfo$intb.hi[cinfo$Stock==stock])
   endb.low     <- as.numeric(cinfo$endb.low[cinfo$Stock==stock])
   endb.hi      <- as.numeric(cinfo$endb.hi[cinfo$Stock==stock])
-  btype        <- as.character(cinfo$btype[cinfo$Stock==stock])
+  btype        <- ifelse(run.bsm,as.character(cinfo$btype[cinfo$Stock==stock]),"None")
   force.cmsy   <- ifelse(force.cmsy==T,T,cinfo$force.cmsy[cinfo$Stock==stock])
   comment      <- as.character(cinfo$Comment[cinfo$Stock==stock])
   # set global defaults for uncertainty
   duncert      <- dataUncert
   sigR         <- sigmaR
-  
+
   # check for common errors
   if (length(btype)==0){
     cat("ERROR: Could not find the stock in the ID input file - check that the stock names match in ID and Catch files and that commas are used (not semi-colon)")
@@ -254,13 +287,13 @@ for(stock in stocks) {
   } else {bt <- NA}
   
   if(is.na(mean(ct.raw))){
-    cat("ERROR: Missing value in Catch data; fill or interpolate\n")  
+  cat("ERROR: Missing value in Catch data; fill or interpolate\n")  
   }
   nyr          <- length(yr) # number of years in the time series
   
   # change catch to 3 years moving average where value is average of past 3 years 
   ct              <- ma(ct.raw)
-  
+
   # initialize vectors for viable r, k, bt, and all in a matrix
   mdat.all    <- matrix(data=vector(),ncol=2+nyr+1)
   
@@ -316,15 +349,15 @@ for(stock in stocks) {
   } else if(min.yr.i > max.yr.i) {
     int.yr    <- yr[min.yr.i-1]
     if(startbio[1]>=0.5 &  (int.yr-start.yr) < (end.yr-int.yr) & 
-       (min.ct/max.ct) > 0.3) intbio <- c(0.2,0.6) else intbio <- c(0.01,0.4)
-       
-       # else use max catch  
+         (min.ct/max.ct) > 0.3) intbio <- c(0.2,0.6) else intbio <- c(0.01,0.4)
+    
+    # else use max catch  
   } else {
     # assume that biomass range in year before maximum catch was high or medium
     int.yr    <- yr[max.yr.i-1]
     intbio    <- if((startbio[1]>=0.5 & (int.yr-start.yr) < (end.yr-int.yr))| # if initial biomass is high, assume same for intermediate
-                    # ((min.ct/max.ct < 0.3 & (max.yr.i - min.yr.i) < 25))) c(0.5,0.9) else c(0.2,0.6) }
-                    (((max.ct-min.ct)/max.ct)/(max.yr.i-min.yr.i) > 0.04)) c(0.5,0.9) else c(0.2,0.6) } # if incease is steep, assume high, else medium
+                      # ((min.ct/max.ct < 0.3 & (max.yr.i - min.yr.i) < 25))) c(0.5,0.9) else c(0.2,0.6) }
+                      (((max.ct-min.ct)/max.ct)/(max.yr.i-min.yr.i) > 0.04)) c(0.5,0.9) else c(0.2,0.6) } # if incease is steep, assume high, else medium
   # end of intbio setting
   
   # final biomass range from input file
@@ -353,13 +386,15 @@ for(stock in stocks) {
       ", endbio=",endbio,ifelse(is.na(endb.low)==T,"default","expert"),"\n")
   
   time.start<-proc.time()[3]
+  extended.bounds<-c(rep(1,6))
+  bound.reduce<-1000
   #------------------------------------------------------------------
   # Uniform sampling of the r-k space
   #------------------------------------------------------------------
   # get random set of r and k from log space distribution 
   ri1 = exp(runif(n, log(start.r[1]), log(start.r[2])))  
   ki1 = exp(runif(n, log(start.k[1]/ri1), log(start.k[2]/ri1)))  
-  #-----------------------------------------------------------------
+   #-----------------------------------------------------------------
   # Plot data and progress
   #-----------------------------------------------------------------
   # check for operating system, open separate window for graphs if Windows
@@ -373,27 +408,18 @@ for(stock in stocks) {
   lines(x=yr,y=ct,col="blue", lwd=1)
   points(x=yr[max.yr.i], y=max.ct, col="red", lwd=2)
   points(x=yr[min.yr.i], y=min.ct, col="red", lwd=2)
-  
+
   # plot r-k graph
   plot(x=ri1, y=ki1, xlim = start.r, ylim = c(start.k[1]/start.r[2],start.k[2]/start.r[1]), log="xy", xlab="r", ylab="k", 
        main="B: Finding viable r-k", pch=".", cex=3, bty="l", col="gray95")
-  
+
   #---------------------------------------------------------------------
   # 1 - Call CMSY-SchaeferMC function to preliminary explore the r-k space
   #---------------------------------------------------------------------
   cat("First Monte Carlo filtering of r-k space with ",n," points...\n")
   MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
-                     pt=T, duncert=dataUncert)
+                     pt=T, duncert=dataUncert, extended.bounds=extended.bounds)
   mdat.all <- rbind(mdat.all,MCA[[1]])
-  if(length(mdat.all[,1])>=(500))
-  {
-    if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
-    if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
-  }
   rv.all   <- mdat.all[,1]
   kv.all   <- mdat.all[,2]
   btv.all  <- mdat.all[,3:(2+nyr+1)]
@@ -402,71 +428,73 @@ for(stock in stocks) {
   n.viable.pt <- length(unique(mdat.all[,1]))
   cat("Found ",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
   
-  #----------------------------------------------------------------------- 
-  # 2 - if the lower bound of k is too high, reduce it by half and rerun
-  #-----------------------------------------------------------------------
-  if(length(kv.all[kv.all < 1.1*start.k[1]/rv.all & rv.all < mean(start.r)]) > 10) {
-    cat("Reducing lower bound of k, resampling area with",n,"additional points...\n")
-    start.k <- c(0.5*start.k[1],start.k[2])
-    ri1 = exp(runif(n, log(start.r[1]), log(start.r[2])))  
-    ki1 = exp(runif(n, log(start.k[1]/ri1), log(start.k[2]/ri1)))  
-    MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
-                       pt=T, duncert=dataUncert)
-    mdat.all <- rbind(mdat.all,MCA[[1]])
-    if(length(mdat.all[,1])>=(500))
-    {
-      if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
-    }
-    rv.all   <- mdat.all[,1]
-    kv.all   <- mdat.all[,2]
-    btv.all  <- mdat.all[,3:(2+nyr+1)]
-    n.viable.b   <- length(mdat.all[,1])
-    n.viable.pt <- length(unique(mdat.all[,1]))
-    cat("Found altogether",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
-  }
+  #-------------------------------------------------------------------
+  # 2 - if few points were found then resample and shrink the log k space
+  #-------------------------------------------------------------------
   
-  #-------------------------------------------------------------------
-  # 3 - if few points were found then resample and shrink the log k space
-  #-------------------------------------------------------------------
-  if (n.viable.b <= 1000){
-    start.k.new  <- start.k
+  if (n.viable.b <= 1000 | min(extended.bounds)<1 | start.k[1]>(0.75*min(kv.all*rv.all)) | start.k[2]<(1.25*max(kv.all*rv.all))){
     max.attempts     <- 3
     current.attempts <- 1
-    startbins        <- 10  
-    while (n.viable.b <= 1000 && current.attempts <= max.attempts){
+    while ((n.viable.b <= 1000 | min(extended.bounds)<1 | start.k[1]>(0.75*min(kv.all*rv.all)) | start.k[2]<(1.25*max(kv.all*rv.all))) && current.attempts <= max.attempts){
       if(n.viable.pt > 0) {
-        start.k.new[1] <- exp(mean(c(log(start.k.new[1]), min(log(0.8*(kv.all*rv.all))))))
-        start.k.new[2] <- exp(mean(c(log(start.k.new[2]), max(log(1.2*(kv.all*rv.all)))))) }else{
-          start.k.new[1] <- 0.5*start.k.new[1]
-          start.k.new[2] <- 1.5*start.k.new[2]   
+        start.k[1] <- min(0.75*(kv.all*rv.all))
+        start.k[2] <- max(1.25*(kv.all*rv.all)) }else{
+        start.k[1] <- 0.5*start.k[1]
+        start.k[2] <- 2*start.k[2]   
         }
       n.new <- n*current.attempts #add more points
       ri1 = exp(runif(n.new, log(start.r[1]), log(start.r[2])))  
-      ki1 = exp(runif(n.new, log(start.k.new[1]/ri1), log(start.k.new[2]/ri1)))
-      cat("Shrinking k space: repeating Monte Carlo in the interval [",(start.k.new[1]/start.r[2]),",",(start.k.new[2]/start.r[1]),"]\n")
+      ki1 = exp(runif(n.new, log(start.k[1]/ri1), log(start.k[2]/ri1)))
+      cat("Shrinking k space: repeating Monte Carlo in the interval [",(start.k[1]/start.r[2]),",",(start.k[2]/start.r[1]),"]\n")
       cat("Attempt ",current.attempts," of ",max.attempts," with ",n.new," additional points...","\n")
-      if(current.attempts==2 & n.viable.b < 50){
+      if(current.attempts==1 & n.viable.b < 100){
+        extended.bounds<-rep(0.5,6)
+        cat("Removing bounds on depletion \n")   
+      }
+      if(current.attempts==2 & n.viable.b < 300){
+        extended.bounds<-rep(0.01,6)
+        cat("Removing bounds on depletion \n")   
+      }
+      if(current.attempts==3 & n.viable.b < 500){
         duncert   <- 2*dataUncert
         sigR      <- 2*sigmaR
-        startbins <- 20
         cat("Doubling startbins, catch and process error, and number of variability patterns \n")   
       }
       MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
-                         pt=T, duncert=duncert)
+                         pt=T, duncert=duncert, extended.bounds=extended.bounds)
       mdat.all <- rbind(mdat.all,MCA[[1]])
-      if(length(mdat.all[,1])>=(500))
+      if(length(mdat.all[,1])>=(bound.reduce))
       {
-        if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
-        if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
+        if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]
+        extended.bounds[1]<-1}else if(length(mdat.all[mdat.all[,(3)]>=(0.5*startbio[1]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(3)]>=(0.5*startbio[1]),,drop=FALSE]
+        extended.bounds[1]<-0.5}
+        if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]
+        extended.bounds[2]<-1}else if(length(mdat.all[mdat.all[,(3)]<=(0.5*startbio[2]+0.5),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(3)]<=(0.5*startbio[2]+0.5),,drop=FALSE]
+        extended.bounds[2]<-0.5}
+        if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]
+        extended.bounds[3]<-1}else if(length(mdat.all[mdat.all[,(nyr+3)]>=(0.5*endbio[1]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(0.5*endbio[1]),,drop=FALSE]
+        extended.bounds[3]<-0.5}
+        if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]
+        extended.bounds[4]<-1}else if(length(mdat.all[mdat.all[,(nyr+3)]<=(0.5*endbio[2]+0.5),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(0.5*endbio[2]+0.5),,drop=FALSE]
+        extended.bounds[4]<-0.5}
+        if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]
+        extended.bounds[5]<-1}else if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(0.5*intbio[1]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(0.5*intbio[1]),,drop=FALSE]
+        extended.bounds[5]<-0.5}
+        if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]
+        extended.bounds[6]<-1}else if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(0.5*intbio[2]+0.5),1,drop=FALSE])>=(bound.reduce))
+        {mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(0.5*intbio[2]+0.5),,drop=FALSE]
+        extended.bounds[6]<-0.5}
       }
       rv.all   <- mdat.all[,1]
       kv.all   <- mdat.all[,2]
@@ -486,24 +514,48 @@ for(stock in stocks) {
   # 4 - if tip of viable r-k pairs is 'thin', do extra sampling there
   #------------------------------------------------------------------
   if(length(rv.all[rv.all > 0.9*start.r[2]]) < 5) { 
-    l.sample.r        <- quantile(rv.all,0.6)
+    l.sample.r        <- 0.5*max(rv.all)
     add.points        <- ifelse(is.na(current.attempts)==T,n,ifelse(current.attempts==2,2*n,ifelse(length(rv.all)>500,3*n,6*n)))
     cat("Final sampling in the tip area above r =",l.sample.r,"with",add.points,"additional points...\n")
-    start.k.new <- c((0.8*min(kv.all*rv.all)),(1.2*max(kv.all*rv.all)))
+    start.k <- c((0.75*min(kv.all[rv.all>=l.sample.r]*rv.all[rv.all>=l.sample.r])),(1.25*max(kv.all[rv.all>=l.sample.r]*rv.all[rv.all>=l.sample.r])))
     
-    ri1 = exp(runif(add.points, log(l.sample.r), log(start.r[2])))  
-    ki1 = exp(runif(add.points, log(start.k.new[1]/ri1), log(start.k.new[2]/ri1)))
+    ri1 = runif(add.points, l.sample.r, min(start.r[2],(3*l.sample.r)))  
+    ki1 = exp(runif(add.points, log(start.k[1]/ri1), log(start.k[2]/ri1)))
     MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
-                       pt=T, duncert=duncert)
+                       pt=T, duncert=duncert, extended.bounds=extended.bounds)
     mdat.all <- rbind(mdat.all,MCA[[1]])
-    if(length(mdat.all[,1])>=(500))
+    if(length(mdat.all[,1])>=(bound.reduce))
     {
-      if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]}
-      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(500)){mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]}
+      if(length(mdat.all[mdat.all[,(3)]>=(startbio[1]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(3)]>=(startbio[1]),,drop=FALSE]
+      extended.bounds[1]<-1}else if(length(mdat.all[mdat.all[,(3)]>=(0.5*startbio[1]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(3)]>=(0.5*startbio[1]),,drop=FALSE]
+      extended.bounds[1]<-0.5}
+      if(length(mdat.all[mdat.all[,(3)]<=(startbio[2]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(3)]<=(startbio[2]),,drop=FALSE]
+      extended.bounds[2]<-1}else if(length(mdat.all[mdat.all[,(3)]<=(0.5*startbio[2]+0.5),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(3)]<=(0.5*startbio[2]+0.5),,drop=FALSE]
+      extended.bounds[2]<-0.5}
+      if(length(mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(endbio[1]),,drop=FALSE]
+      extended.bounds[3]<-1}else if(length(mdat.all[mdat.all[,(nyr+3)]>=(0.5*endbio[1]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(nyr+3)]>=(0.5*endbio[1]),,drop=FALSE]
+      extended.bounds[3]<-0.5}
+      if(length(mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(endbio[2]),,drop=FALSE]
+      extended.bounds[4]<-1}else if(length(mdat.all[mdat.all[,(nyr+3)]<=(0.5*endbio[2]+0.5),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(nyr+3)]<=(0.5*endbio[2]+0.5),,drop=FALSE]
+      extended.bounds[4]<-0.5}
+      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(intbio[1]),,drop=FALSE]
+      extended.bounds[5]<-1}else if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]>=(0.5*intbio[1]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]>=(0.5*intbio[1]),,drop=FALSE]
+      extended.bounds[5]<-0.5}
+      if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(intbio[2]),,drop=FALSE]
+      extended.bounds[6]<-1}else if(length(mdat.all[mdat.all[,(which(yr==int.yr) )]<=(0.5*intbio[2]+0.5),1,drop=FALSE])>=(bound.reduce))
+      {mdat.all<-mdat.all[mdat.all[,(which(yr==int.yr) )]<=(0.5*intbio[2]+0.5),,drop=FALSE]
+      extended.bounds[6]<-0.5}
     }
     rv.all   <- mdat.all[,1]
     kv.all   <- mdat.all[,2]
@@ -512,9 +564,9 @@ for(stock in stocks) {
     n.viable.pt <- length(unique(mdat.all[,1]))
     cat("Found altogether",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
   }
-  
+
   time.end<-proc.time()[3]
-  test.runtime.New[trt]<-(time.end-time.start)
+  test.runtime<-(time.end-time.start)
   
   #plot(btv.all[1,],ylim=c(min(btv.all),max(btv.all)))
   #for(i in 1:length(btv.all[,1])){lines(btv.all[i,])}
@@ -1291,7 +1343,8 @@ if(write.output == TRUE) {
                       F.Fmsy.ext[yr.ext==2011],F.Fmsy.ext[yr.ext==2012],F.Fmsy.ext[yr.ext==2013],F.Fmsy.ext[yr.ext==2014],F.Fmsy.ext[yr.ext==2015],
                       B.ext[yr.ext==2000],B.ext[yr.ext==2001],B.ext[yr.ext==2002],B.ext[yr.ext==2003],
                       B.ext[yr.ext==2004],B.ext[yr.ext==2005],B.ext[yr.ext==2006],B.ext[yr.ext==2007],B.ext[yr.ext==2008],B.ext[yr.ext==2009],B.ext[yr.ext==2010],
-                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015]) 
+                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015],
+                      test.runtime,extended.bounds[1],extended.bounds[2],extended.bounds[3],extended.bounds[4],extended.bounds[5],extended.bounds[6]) 
   
   write.table(output, file=outfile, append = T, sep = ",", 
               dec = ".", row.names = FALSE, col.names = FALSE)

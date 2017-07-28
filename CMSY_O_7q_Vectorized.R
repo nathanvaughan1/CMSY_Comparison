@@ -5,8 +5,6 @@
 ## Version of July 2017
 ## Version CMSY_O_7q_Vectorized.R
 ##---------------------------------------------------------------------------------------------
-library(R2jags)  # Interface with JAGS
-library(coda) 
 library("parallel")
 library("foreach")
 library("doParallel")
@@ -34,13 +32,19 @@ id_file     <-  "O_Stocks_ID_18_Med.csv"  #  name of file containing stock-speci
 outfile     <- paste("Out_",format(Sys.Date(),format="%B%d%Y_"),id_file,sep="") # default name for output file
 outfile.txt <- paste(outfile,".txt", sep="") 
 
+# Read data
+cdat         <- read.csv(catch_file, header=T, dec=".", stringsAsFactors = FALSE)
+cinfo        <- read.csv(id_file, header=T, dec=".", stringsAsFactors = FALSE)
+cat("Files", catch_file, ",", id_file, "read successfully","\n")
+
 #----------------------------------------
 # Select stock to be analyzed
 #----------------------------------------
 stocks      <-NA
 # If the input files contain more than one stock, specify below the stock to be analyzed
-# If the line below is commented out (#), all stocks in the input file will be analyzed
- stocks <-  "SARDPIL_SA_EXAMPLE" # c("SEPIOFF_CY","MICRPOU_IS","EPINGUA_IS","CHAMGAL_SA","CORYHIP_SA","ILLECOI_SA")
+# If the 2 lines below are commented out (#), all stocks in the input file will be analyzed
+stocks <- as.character(cinfo$Stock)
+stocks <- stocks[c(1:19,21:length(stocks))] # c("SEPIOFF_CY","MICRPOU_IS","EPINGUA_IS","CHAMGAL_SA","CORYHIP_SA","ILLECOI_SA")
 
 #-----------------------------------------
 # General settings for the analysis
@@ -53,10 +57,17 @@ ni           <- 3 # iterations for r-k-startbiomass combinations, to test differ
 nab          <- 2 # default=5; minimum number of years with abundance data to run BSM
 mgraphs      <- T # set to TRUE to produce additional graphs for management
 save.plots   <- T # set to TRUE to save graphs to JPEG files
-close.plots  <- F # set to TRUE to close on-screen plots after they are saved, to avoid "too many open devices" error in batch-processing
+close.plots  <- T # set to TRUE to close on-screen plots after they are saved, to avoid "too many open devices" error in batch-processing
 write.output <- T # set to TRUE if table with results in output file is wanted; expects years 2004-2010 to be available
 force.cmsy   <- F # set to TRUE if CMSY results are to be preferred over BSM results
 select.yr    <- NA # option to display F, B, F/Fmsy and B/Bmsy for a certain year; default NA
+run.bsm      <- F # set to TRUE if you want to run BSM model
+
+if(run.bsm)
+{
+  library(R2jags)  # Interface with JAGS
+  library(coda) 
+}
 
 #----------------------------------------------
 #  FUNCTIONS
@@ -175,16 +186,12 @@ if(write.output==T){
                           "sel_B","sel_B_Bmsy","sel_F","sel_F_Fmsy",
                           "c00","c01","c02","c03","c04","c05","c06","c07","c08","c09","c10","c11","c12","c13","c14","c15",
                           "F.Fmsy00","F.Fmsy01","F.Fmsy02","F.Fmsy03","F.Fmsy04","F.Fmsy05","F.Fmsy06","F.Fmsy07","F.Fmsy08","F.Fmsy09","F.Fmsy10","F.Fmsy11","F.Fmsy12","F.Fmsy13","F.Fmsy14","F.Fmsy15",
-                          "B00","B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12","B13","B14","B15")
+                          "B00","B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12","B13","B14","B15","Runtime")
  
    write.table(outheaders,file=outfile, append = T, sep=",",row.names=F,col.names=F)
 }
 
 cat("Parallel processing will use",ncores_for_computation,"cores\n")
-# Read data
-cdat         <- read.csv(catch_file, header=T, dec=".", stringsAsFactors = FALSE)
-cinfo        <- read.csv(id_file, header=T, dec=".", stringsAsFactors = FALSE)
-cat("Files", catch_file, ",", id_file, "read successfully","\n")
 
 #---------------------------------
 # Analyze stock(s)
@@ -195,11 +202,9 @@ if(is.na(stocks[1])==TRUE){
   # stocks         <- as.character(cinfo$Stock[cinfo$Subregion=="Sardinia"]) # Analyze stocks in Region
 }
 
-test.runtime.Vect<-vector(length=length(stocks))
-trt<-0
 # analyze one stock after the other
 for(stock in stocks) {
-  trt<-trt+1
+  set.seed(12345)
   cat("Processing",stock,",", as.character(cinfo$ScientificName[cinfo$Stock==stock]),"\n")
   # assign data from cinfo to vectors
   res          <- as.character(cinfo$Resilience[cinfo$Stock==stock])
@@ -215,7 +220,7 @@ for(stock in stocks) {
   intb.hi      <- as.numeric(cinfo$intb.hi[cinfo$Stock==stock])
   endb.low     <- as.numeric(cinfo$endb.low[cinfo$Stock==stock])
   endb.hi      <- as.numeric(cinfo$endb.hi[cinfo$Stock==stock])
-  btype        <- as.character(cinfo$btype[cinfo$Stock==stock])
+  btype        <- ifelse(run.bsm,as.character(cinfo$btype[cinfo$Stock==stock]),"None")
   force.cmsy   <- ifelse(force.cmsy==T,T,cinfo$force.cmsy[cinfo$Stock==stock])
   comment      <- as.character(cinfo$Comment[cinfo$Stock==stock])
   # set global defaults for uncertainty
@@ -466,7 +471,7 @@ for(stock in stocks) {
   }
 
   time.end<-proc.time()[3]
-  test.runtime.Vect[trt]<-(time.end-time.start)
+  test.runtime<-(time.end-time.start)
   
   # ------------------------------------------------------------------
   # Bayesian analysis of catch & biomass (or CPUE) with Schaefer model
@@ -1240,7 +1245,7 @@ if(write.output == TRUE) {
                       F.Fmsy.ext[yr.ext==2011],F.Fmsy.ext[yr.ext==2012],F.Fmsy.ext[yr.ext==2013],F.Fmsy.ext[yr.ext==2014],F.Fmsy.ext[yr.ext==2015],
                       B.ext[yr.ext==2000],B.ext[yr.ext==2001],B.ext[yr.ext==2002],B.ext[yr.ext==2003],
                       B.ext[yr.ext==2004],B.ext[yr.ext==2005],B.ext[yr.ext==2006],B.ext[yr.ext==2007],B.ext[yr.ext==2008],B.ext[yr.ext==2009],B.ext[yr.ext==2010],
-                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015]) 
+                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015],test.runtime) 
   
   write.table(output, file=outfile, append = T, sep = ",", 
               dec = ".", row.names = FALSE, col.names = FALSE)
