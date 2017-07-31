@@ -51,7 +51,8 @@ stocks <- stocks[c(1:19,21:length(stocks))] # c("SEPIOFF_CY","MICRPOU_IS","EPING
 #-----------------------------------------
 dataUncert   <- 0.1  # set observation error as uncertainty in catch - default is SD=0.1
 sigmaR       <- 0.1 # overall process error for CMSY; SD=0.1 is the default
-n            <- 10000 # initial number of r-k pairs
+n            <- 5000 # initial number of r-k pairs
+max.iters    <- 16
 n.new        <- n # initialize n.new
 ni           <- 3 # iterations for r-k-startbiomass combinations, to test different variability patterns; no improvement seen above 3
 nab          <- 2 # default=5; minimum number of years with abundance data to run BSM
@@ -102,16 +103,6 @@ SchaeferMC<-function(ri, ki, bi, ct, ct.est, bio.bounds, sigR, duncert, pt){
     biomass[,2]<-ki[range]
     biomass[,3]<-bi[range]
     
-    #Calculate random process error and catch error bounded at +-1.96 standard deviations to prevent anomalies at high sample size
-    #biomass[,3:(nyr+2)]<-exp(rtnorm(length(biomass[,1])*nyr,blog.mu,blog.sd,min.val=-1.96*blog.sd,max.val=1.96*blog.sd))# set new process error in population growth for every year.
-    #biomass[,(nyr+3):(2*nyr+2)]<-matrix(exp(rtnorm(length(biomass[,1])*nyr,rep((clog.mu+ct.est/ct-1),length(biomass[,1])),clog.sd,min.val=-1.96*clog.sd,max.val=1.96*clog.sd)),nrow=length(biomass[,1]),byrow=TRUE)# model the catch error as a log normal distribution.
-    
-    #Rescale to bound the total catch deviation to +-1.96 standard errors
-    #biomass[,3:(nyr+2)]<-biomass[,3:(nyr+2)]*(exp(rtnorm(length(biomass[,1]),s.blog.mu,s.blog.sd,min.val=-1.96*s.blog.sd,max.val=1.96*s.blog.sd))/apply(biomass[,3:(nyr+2)],1,mean))
-    #biomass[,(nyr+3):(2*nyr+2)]<-biomass[,(nyr+3):(2*nyr+2)]*(exp(rtnorm(length(biomass[,1]),(s.clog.mu+sum(ct.est)/sum(ct)-1),s.clog.sd,min.val=-1.96*s.clog.sd,max.val=1.96*s.clog.sd))/apply(biomass[,(nyr+3):(2*nyr+2)],1,mean))
-    
-    #biomass[,(nyr+3):(2*nyr+2)]<-matrix(biomass[,(nyr+3):(2*nyr+2)]*rep(ct,length(biomass[,1])),nrow=length(biomass[,1]),byrow=TRUE)# model the catch error as a log normal distribution.
-    
     #Loop over years to calculate biomass series
     for (t in 1:nyr)  { 
       #Calculate end of year biomass
@@ -124,17 +115,7 @@ SchaeferMC<-function(ri, ki, bi, ct, ct.est, bio.bounds, sigR, duncert, pt){
       biomass<-biomass[(!is.na(biomass[,(t+3)])),,drop=FALSE]
       biomass<-biomass[biomass[,(t+3)]>bio.bounds[1,(t+1)],,drop=FALSE]
       biomass<-biomass[biomass[,(t+3)]<bio.bounds[2,(t+1)],,drop=FALSE]
-      #remove biomass series where intermittent biomass outside bounds
-      #if((t+1)==int.yr.i){
-      #  biomass<-biomass[biomass[,(t+2*nyr+3)]>=(extended.bounds[3]*intbio[1]),,drop=FALSE]
-      #  biomass<-biomass[biomass[,(t+2*nyr+3)]<=(extended.bounds[4]*intbio[2]+(1-extended.bounds[4])),,drop=FALSE]
-      #}
     }
-    
-    #remove biomass series where end biomass outside bounds
-    #biomass<-biomass[biomass[,(3*nyr+3)]>=(extended.bounds[5]*endbio[1]),,drop=FALSE]
-    #biomass<-biomass[biomass[,(3*nyr+3)]<=(extended.bounds[6]*endbio[2]+(1-extended.bounds[6])),,drop=FALSE]
-    
     # instruction necessary to make the foreach loop see the variable:
     inmemorytable<-biomass[drop=FALSE]
   }#end parallelization
@@ -142,18 +123,6 @@ SchaeferMC<-function(ri, ki, bi, ct, ct.est, bio.bounds, sigR, duncert, pt){
   if(pt){if(length(inmemorytable[,1])>0){ points(x=inmemorytable[,1], y=inmemorytable[,2], pch=".", cex=4, col="gray")}}
   return(inmemorytable)
 }
-
-
-#SchaeferMC <- function(ri, ki, bi, ct, ct.est, bound.bio, sigR, duncert, pt) {
-  
-  # get index of intermediate year
-  
-#  mdat<-SchaeferParallelSearch(ri, ki, bi, ct, ct.est, bound.bio, sigR, duncert, pt)
-  
-#  cat("\n")
-#  return(list(mdat))
-#} # end of SchaeferMC function
-
 
 #-----------------------------------------------
 # Function for moving average
@@ -434,7 +403,7 @@ for(stock in stocks) {
   # 2 - if few points were found then resample and shrink the log k space
   #-------------------------------------------------------------------
   current.attempts <- 1
-  max.attempts     <- 20
+  max.attempts     <- max.iters
   while ((current.attempts <= 1 | n.viable.b <= 1000 ) && current.attempts <= max.attempts)
   {
       startbio.ratio<-(bio.bounds[2,1]-bio.bounds[1,1])/(base.bio.bounds[2,1]-base.bio.bounds[1,1])
@@ -455,32 +424,15 @@ for(stock in stocks) {
           
           r.quant         <-  quantile(rv.all,c(0,0.1,0.2,0.5,0.8,0.9,1))
           r.quant.log     <-  log(r.quant)
-          #start.r.new     <-  r.quant[c(1,9)]
-          #range.r         <-  r.quant[9]-r.quant[1]
-          #start.r.new[1]  <-  max(log(start.r[1]),start.r.new[1]-0.4*range.r)
-          #start.r.new[2]  <-  min(log(start.r[2]),start.r.new[2]+0.4*range.r)
-          #dens<-density(log.r,adjust=0.1,from=start.r.new[1],to=start.r.new[2])
-          #dens.probs<-ifelse((max(dens$y)-dens$y)>0,(max(dens$y)-dens$y)+0.001,0.001)
-          #log.ri1<-sample(dens$x,size=n.new,prob=(dens.probs/sum(dens.probs)),replace=TRUE)
           
           start.r.new <- c(max(start.r[1],0.75*min(rv.all)),min(start.r[2],1.5*max(rv.all)))
           log.ri1<-runif(n.new, log(start.r.new[1]), log(start.r.new[2]))
-          
-          #lower.log.k   <-  log(kv.all[log.r<=r.quant[3]])
-          #mid.log.k     <-  log(kv.all[log.r>=r.quant[4]&log.r<=r.quant[6]])
-          #upper.log.k   <-  log(kv.all[log.r>=r.quant[7]])
           
           mean.k1      <-  log(mean(kv.all[rv.all<=r.quant[3]]))
           start.k1     <-  c(log(min(kv.all[rv.all<=r.quant[3]])),log(max(kv.all[rv.all<=r.quant[3]])))
           range.k1     <-  start.k1[2]-start.k1[1]
           start.k1[1]  <-  start.k1[1]-0.2*range.k1
           start.k1[2]  <-  start.k1[2]+0.2*range.k1
-          
-          #mean.k2      <-  mean(mid.log.k)
-          #start.k2     <-  range(mid.log.k)
-          #range.k2     <-  start.k2[2]-start.k2[1]
-          #start.k2[1]  <-  start.k2[1]-0.2*range.k2
-          #start.k2[2]  <-  start.k2[2]+0.2*range.k2
           
           mean.k3      <-  log(mean(kv.all[rv.all>=r.quant[5]]))
           start.k3     <-  c(log(min(kv.all[rv.all>=r.quant[5]])),log(max(kv.all[rv.all>=r.quant[5]])))
@@ -495,22 +447,6 @@ for(stock in stocks) {
           ki1.min  <- ifelse(ki1.min>0.99*ki1.mean,0.99*ki1.mean,ki1.min)
           ki1.max  <- (start.k1[2]+(start.k3[2]-start.k1[2])*((log.ri1-r.quant.log[1])/(r.quant.log[5]-r.quant.log[1])))
           ki1.max  <- ifelse(ki1.max<1.01*ki1.mean,1.01*ki1.mean,ki1.max)
-          
-          #ki1.mean <- ifelse(log.ri1>r.quant[5],
-          #                   (mean.k2+(mean.k3-mean.k2)*((log.ri1-r.quant[5])/(r.quant[8]-r.quant[5]))),
-          #                   (mean.k2+(mean.k1-mean.k2)*((r.quant[5]-log.ri1)/(r.quant[5]-r.quant[2]))))
-          #ki1.mean <- ifelse(ki1.mean<0.01*mean.k2,0.01*mean.k2,ki1.mean)
-          #ki1.min  <- ifelse(log.ri1>r.quant[5],
-          #                   (start.k2[1]+(start.k3[1]-start.k2[1])*((log.ri1-r.quant[5])/(r.quant[8]-r.quant[5]))),
-          #                   (start.k2[1]+(start.k1[1]-start.k2[1])*((r.quant[5]-log.ri1)/(r.quant[5]-r.quant[2]))))
-          #ki1.min <- ifelse(ki1.min<0.001*start.k2[1],0.01*start.k2[1],ki1.min)
-          #ki1.min <- ifelse((ki1.min-ki1.mean)>-0.01*ki1.mean,0.99*ki1.mean,ki1.min)
-          #ki1.max  <- ifelse(log.ri1>r.quant[5],
-          #                   (start.k2[2]+(start.k3[2]-start.k2[2])*((log.ri1-r.quant[5])/(r.quant[8]-r.quant[5]))),
-          #                   (start.k2[2]+(start.k1[2]-start.k2[2])*((r.quant[5]-log.ri1)/(r.quant[5]-r.quant[2]))))
-          #ki1.max <- ifelse(ki1.max<0.001*start.k2[2],0.01*start.k2[2],ki1.max)
-          #ki1.max <- ifelse((ki1.max-ki1.mean)<0.01*ki1.mean,1.01*ki1.mean,ki1.max)
-          
           ki1.sd   <- (ki1.max - ki1.min)/4
           
           ri1  <- exp(log.ri1)
@@ -525,10 +461,7 @@ for(stock in stocks) {
           base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<-apply(btv.all[,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct))),drop=FALSE],2,mean)
           bio.bounds[2,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<- 2*base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]-base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]^2
           bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<- base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]^2
-        }
-        #ct.est<-ctv.all[,rand()]
-        }else{
-        #kr.guess <- mean(kr.guess,kr.min,kr.max)
+        }}else{
         if(current.attempts==4 | current.attempts==8 | current.attempts==12 | current.attempts==16)
         {kr.min   <- 0.8*kr.min
         kr.max   <- 1.2*kr.max}
@@ -545,7 +478,7 @@ for(stock in stocks) {
                          bio.bounds=bio.bounds, sigR=sigR, duncert=dataUncert, pt=T)
       mdat.all <- rbind(mdat.all,MCA)
       
-      if(current.attempts==4 | current.attempts==8 | current.attempts==12 | current.attempts==16){
+      if(current.attempts==6 | current.attempts==12){
         reduce.bound<-min(bound.reduce[current.attempts],max(0.5*n.viable.b,10))
         if(n.viable.b < 5 | n.viable.b > reduce.bound)
         {for(i in c(1,which(yr==int.yr),(length(ct)+1)))
@@ -928,7 +861,7 @@ ucl.MSY.est     <- exp(ucl.log.MSY.est)
 # get predicted biomass vectors as median and quantiles 
 # only use biomass trajectories from r-k pairs within the confidence limits
 rem.btv.all <- mdat.all[which(mdat.all[,1] > lcl.r.est & mdat.all[,1] < ucl.r.est 
-                              & mdat.all[,2] > lcl.k.est & mdat.all[,2] < ucl.k.est),3:(2+nyr+1)]
+                              & mdat.all[,2] > lcl.k.est & mdat.all[,2] < ucl.k.est),3:(2+nyr+1),drop=FALSE]
 median.btv <- apply(rem.btv.all,2, median)
 median.btv.lastyr  <- median.btv[length(median.btv)-1]
 nextyr.bt  <- median.btv[length(median.btv)]
