@@ -95,7 +95,6 @@ SchaeferParallelSearch<-function(ri, ki, ct, startbt, intbio, endbio, int.yr.i, 
   #set uncertianty in catch 
   zlog.sd = sqrt(log(1+(duncert)^2))
   #print points if graphing
-  if(pt){ points(x=ri, y=ki, pch=".", cex=4, col="gray")}
   
   inmemorytable <- foreach (i = 1 : splits, .combine='rbind', .packages='foreach', .inorder=TRUE) %dopar%{
     
@@ -132,6 +131,8 @@ SchaeferParallelSearch<-function(ri, ki, ct, startbt, intbio, endbio, int.yr.i, 
     # instruction necessary to make the foreach loop see the variable:
     inmemorytable<-rbind(inmemorytable,biomass[,c(1,2,(2*nyr+3):(3*nyr+3))])
   }#end parallelization
+  
+  if(pt){if(length(inmemorytable[,1])>0){ points(x=inmemorytable[,1], y=inmemorytable[,2], pch=".", cex=4, col="gray")}}
   
   return(inmemorytable)
 }
@@ -186,7 +187,7 @@ if(write.output==T){
                           "sel_B","sel_B_Bmsy","sel_F","sel_F_Fmsy",
                           "c00","c01","c02","c03","c04","c05","c06","c07","c08","c09","c10","c11","c12","c13","c14","c15",
                           "F.Fmsy00","F.Fmsy01","F.Fmsy02","F.Fmsy03","F.Fmsy04","F.Fmsy05","F.Fmsy06","F.Fmsy07","F.Fmsy08","F.Fmsy09","F.Fmsy10","F.Fmsy11","F.Fmsy12","F.Fmsy13","F.Fmsy14","F.Fmsy15",
-                          "B00","B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12","B13","B14","B15","Runtime")
+                          "B00","B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12","B13","B14","B15","Runtime","total.num.samples")
  
    write.table(outheaders,file=outfile, append = T, sep=",",row.names=F,col.names=F)
 }
@@ -371,7 +372,7 @@ for(stock in stocks) {
   points(x=yr[min.yr.i], y=min.ct, col="red", lwd=2)
 
   # plot r-k graph
-  plot(x=ri1, y=ki1, xlim = start.r, ylim = start.k, log="xy", xlab="r", ylab="k", 
+  plot(x=ri1, y=ki1, xlim = start.r, ylim = c(0.5*start.k[1],start.k[2]), log="xy", xlab="r", ylab="k", 
        main="B: Finding viable r-k", pch=".", cex=3, bty="l", col="gray95")
 
   #---------------------------------------------------------------------
@@ -1245,7 +1246,7 @@ if(write.output == TRUE) {
                       F.Fmsy.ext[yr.ext==2011],F.Fmsy.ext[yr.ext==2012],F.Fmsy.ext[yr.ext==2013],F.Fmsy.ext[yr.ext==2014],F.Fmsy.ext[yr.ext==2015],
                       B.ext[yr.ext==2000],B.ext[yr.ext==2001],B.ext[yr.ext==2002],B.ext[yr.ext==2003],
                       B.ext[yr.ext==2004],B.ext[yr.ext==2005],B.ext[yr.ext==2006],B.ext[yr.ext==2007],B.ext[yr.ext==2008],B.ext[yr.ext==2009],B.ext[yr.ext==2010],
-                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015],test.runtime) 
+                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015],test.runtime,length(mdat.all[,1])) 
   
   write.table(output, file=outfile, append = T, sep = ",", 
               dec = ".", row.names = FALSE, col.names = FALSE)
