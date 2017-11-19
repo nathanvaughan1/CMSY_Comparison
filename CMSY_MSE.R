@@ -186,7 +186,7 @@ if(is.na(stocks[1])==TRUE){
 
 # analyze one stock after the other
 
-stocks<-rep(stocks[1],10)
+#stocks<-rep(stocks[1],10)
 for(stock in stocks) {
   cat("Processing",stock,",", as.character(cinfo$ScientificName[cinfo$Stock==stock]),"\n")
   # assign data from cinfo to vectors
