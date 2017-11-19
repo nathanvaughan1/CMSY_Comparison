@@ -186,6 +186,7 @@ if(is.na(stocks[1])==TRUE){
 
 # analyze one stock after the other
 
+stocks<-rep(stocks[1],10)
 for(stock in stocks) {
   cat("Processing",stock,",", as.character(cinfo$ScientificName[cinfo$Stock==stock]),"\n")
   # assign data from cinfo to vectors
@@ -356,7 +357,7 @@ for(stock in stocks) {
   bound.reduce<-c(10,10,10,10,10,20,20,20,20,20,30,30,30,30,30,40,40,40,40,40,50)
   #(ri, ki, bi, ct, ct.est, bound.bio, sigR, duncert, pt)
   #------------------------------------------------------------------
-  # Uniform sampling of the r-k space
+  # Sampling of the r-k space
   #------------------------------------------------------------------
   # get random set of r and k 
   ri1 <- exp(runif(n, log(start.r[1]), log(start.r[2])))  
@@ -430,14 +431,14 @@ for(stock in stocks) {
           mean.k1      <-  log(mean(kv.all[rv.all<=r.quant[3]]))
           start.k1     <-  c(log(min(kv.all[rv.all<=r.quant[3]])),log(max(kv.all[rv.all<=r.quant[3]])))
           range.k1     <-  start.k1[2]-start.k1[1]
-          start.k1[1]  <-  start.k1[1]-0.2*range.k1
-          start.k1[2]  <-  start.k1[2]+0.2*range.k1
+          start.k1[1]  <-  start.k1[1]-0.5*range.k1
+          start.k1[2]  <-  start.k1[2]+0.5*range.k1
           
           mean.k3      <-  log(mean(kv.all[rv.all>=r.quant[5]]))
           start.k3     <-  c(log(min(kv.all[rv.all>=r.quant[5]])),log(max(kv.all[rv.all>=r.quant[5]])))
           range.k3     <-  start.k3[2]-start.k3[1]
-          start.k3[1]  <-  start.k3[1]-0.2*range.k3
-          start.k3[2]  <-  start.k3[2]+0.2*range.k3
+          start.k3[1]  <-  start.k3[1]-0.5*range.k3
+          start.k3[2]  <-  start.k3[2]+0.5*range.k3
           
           
           ki1.mean <- (mean.k1+(mean.k3-mean.k1)*((log.ri1-r.quant.log[2])/(r.quant.log[6]-r.quant.log[2])))
@@ -456,7 +457,6 @@ for(stock in stocks) {
           start.r.new <- c(max(start.r[1],0.8*min(rv.all)),min(start.r[2],1.2*max(rv.all)))
           ri1<-exp(runif(n.new, log(start.r.new[1]), log(start.r.new[2])))
           ki1 = rtnorm(n.new, mean(kv.all*rv.all)/ri1, (start.k[2]/ri1-start.k[1]/ri1)/3.92, start.k[1]/ri1, start.k[2]/ri1)
-          
           base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<-apply(btv.all[,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct))),drop=FALSE],2,mean)
           bio.bounds[2,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<- 2*base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]-base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]^2
           bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<- base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]^2
