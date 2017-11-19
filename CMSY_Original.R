@@ -1,9 +1,9 @@
 ##---------------------------------------------------------------------------------------------
 ## CMSY and BSM analysis 
-## Original Written by Rainer Froese, Gianpaolo Coro and Henning Winker
-## CMSY modified by Nathan Vaughan to include vectorization, new sampling logic, and automated depletion prior adjustment
+## Written by Rainer Froese, Gianpaolo Coro and Henning Winker
+## Edited by Nathan Vaughan to remove error when 2004:2010 data missing
 ## Version of July 2017
-## Version CMSY_O_7q_new.R
+## Version CMSY_O_7q_Original.R
 ##---------------------------------------------------------------------------------------------
 library("parallel")
 library("foreach")
@@ -51,8 +51,7 @@ stocks <- stocks[c(1:19,21:length(stocks))] # c("SEPIOFF_CY","MICRPOU_IS","EPING
 #-----------------------------------------
 dataUncert   <- 0.1  # set observation error as uncertainty in catch - default is SD=0.1
 sigmaR       <- 0.1 # overall process error for CMSY; SD=0.1 is the default
-n            <- 5000 # initial number of r-k pairs
-max.iters    <- 16
+n            <- 10000 # initial number of r-k pairs
 n.new        <- n # initialize n.new
 ni           <- 3 # iterations for r-k-startbiomass combinations, to test different variability patterns; no improvement seen above 3
 nab          <- 2 # default=5; minimum number of years with abundance data to run BSM
@@ -75,54 +74,107 @@ if(run.bsm)
 #----------------------------------------------
 # Monte Carlo filtering with Schaefer Function
 #----------------------------------------------
+SchaeferParallelSearch<-function(ni, nyr,sigR,duncert,ct,int.yr,intbio, startbt, ki,i, ri,int.yr.i, nstartbt, yr, end.yr, endbio, npoints, pt){
+  ptm<-proc.time()
+  # create vectors for viable r, k and bt
+  inmemorytable <- vector()
+  # parallelised for the points in the r-k space
+  inmemorytable <- foreach (i = 1 : npoints, .combine='rbind', .packages='foreach', .inorder=TRUE) %dopar%{
+  nsbt = length(startbt)
+  VP   <- FALSE
+   for(nj in 1:nsbt) {  
+    # create empty vector for annual biomasses
+    bt <- vector()
+    j<-startbt[nj]
+    # set initial biomass, including 0.1 process error to stay within bounds
+    bt[1]=j*ki[i]*exp(rnorm(1,0, 0.1*sigR))  ## set biomass in first year
+    # repeat test of r-k-startbt combination to allow for different random error
+    for(re in 1:ni)   {
+      #loop through years in catch time series
+      for (t in 1:nyr)  {  # for all years in the time series
+        xt=rnorm(1,0, sigR) # set new process error for every year  
+        zlog.sd = sqrt(log(1+(duncert)^2))
+        zt=rlnorm(1,meanlog = 0, sdlog = zlog.sd) # model the catch error as a log normal distribution.
+        # calculate biomass as function of previous year's biomass plus surplus production minus catch
+        bt[t+1] <- ifelse(bt[t]/ki[i] >= 0.25,
+                          bt[t]+ri[i]*bt[t]*(1-bt[t]/ki[i])*exp(xt)-ct[t]*zt,
+                            bt[t]+(4*bt[t]/ki[i])*ri[i]*bt[t]*(1-bt[t]/ki[i])*exp(xt)-ct[t]*zt) # assuming reduced r at B/k < 0.25
 
-SchaeferMC<-function(ri, ki, bi, ct, ct.est, bio.bounds, sigR, duncert, pt){
-  
-  nyr<-length(ct)             
-  inmemorytable <- matrix(NA,nrow=0,ncol=(2*nyr+3))
+        # if biomass < 0.01 k, discard r-k-startbt combination
+        if(bt[t+1] < 0.01*ki[i]) { 
+          break
+        } # stop looping through years, go to next upper level
+        # intermediate year check
+        if ((t+1)==int.yr.i && (bt[t+1]>(intbio[2]*ki[i]) || bt[t+1]<(intbio[1]*ki[i]))) { 
+          break 
+        }  
+      } # end of loop of years
+        # if loop was broken or last biomass falls outside of expected ranges 
+        # do not store results, go directly to next startbt
+        if(t < nyr || bt[yr==end.yr] > (endbio[2]*ki[i]) || bt[yr==end.yr] < (endbio[1]*ki[i]) ) { 
+            next 
+          } else {
+            #each vector will be finally appended to the others found by the threads - this is done by the .combine='rbind' option
+            inmemorytablerow<-c(i,j,ri[i],ki[i],bt[1:(nyr+1)]/ki[i])
+            if (length(inmemorytablerow)==(4+nyr+1)){
+             if (VP==FALSE)
+              {
+               inmemorytable<-inmemorytablerow
+              }
+             else
+              {
+                  inmemorytable<-rbind(inmemorytable,inmemorytablerow)
+               }
+             VP<-TRUE
+            }
+          }
+      } # end of repetition for random error
+     } # end of j-loop of initial biomasses 
+  # instruction necessary to make the foreach loop see the variable:
+  if (length(inmemorytable)==0)
+      {inmemorytable<-vector(length=4+nyr+1)*NA}
+    else
+      {inmemorytable}
+  }#end loop on points
 
-  #Calculate number of breaks to split up data between cores. Don't make them too large to overload RAM
-  if(ncores_for_computation<6)
-  { splits<-10 #split foreach into chuncks to prevent memory overload errors
-  }else if(ncores_for_computation<8)
-  { splits<-2*ncores_for_computation #split foreach into chuncks to prevent memory overload errors
-  }else
-  { splits<-ncores_for_computation} #split foreach into chuncks to prevent memory overload errors
-  breaks<-floor(seq(0,length(ri),length=(splits+1)))
-  
-  inmemorytable <- foreach (i = 1 : splits, .combine='rbind', .packages='foreach', .inorder=TRUE) %dopar%{
-    
-    rtnorm<-function(n,mean.val=0,sd.val=1,min.val=-3,max.val=3)
-    {vals<-mean.val+(qnorm(runif(n,pnorm((min.val-mean.val)/sd.val),pnorm((max.val-mean.val)/sd.val))))*sd.val}
-    
-    range<-(breaks[i]+1):(breaks[i+1])
-    biomass<-matrix(nrow=(length(range)),ncol=(2*nyr+3))
-    
-    #seperate r and k values into one chunk for each parrallel core
-    biomass[,1]<-ri[range]
-    biomass[,2]<-ki[range]
-    biomass[,3]<-bi[range]
-    
-    #Loop over years to calculate biomass series
-    for (t in 1:nyr)  { 
-      #Calculate end of year biomass
-      biomass[,(t+nyr+3)]<-rtnorm(length(biomass[,1]),ct.est[t],duncert,(ct[t]-1.96*duncert*ct[t]),(ct[t]+1.96*duncert*ct[t]))
-      biomass[,(t+3)]<-ifelse(biomass[,(t+2)] >= 0.25,
-                                    biomass[,(t+2)]+biomass[,1]*biomass[,(t+2)]*(1-biomass[,(t+2)])*rtnorm(length(biomass[,1]),1,sigR,(1-1.96*sigR),(1+1.96*sigR))-(biomass[,(t+nyr+3)]/biomass[,2]),
-                                    biomass[,(t+2)]+(4*biomass[,(t+2)])*biomass[,1]*biomass[,(t+2)]*(1-biomass[,(t+2)])*rtnorm(length(biomass[,1]),1,sigR,(1-1.96*sigR),(1+1.96*sigR))-(biomass[,(t+nyr+3)]/biomass[,2])) # assuming reduced r at B/k < 0.25
-      
-      #remove biomass series where stock collapses
-      biomass<-biomass[(!is.na(biomass[,(t+3)])),,drop=FALSE]
-      biomass<-biomass[biomass[,(t+3)]>bio.bounds[1,(t+1)],,drop=FALSE]
-      biomass<-biomass[biomass[,(t+3)]<bio.bounds[2,(t+1)],,drop=FALSE]
+  #create the output matrix
+  mdat        <- matrix(data=NA, nrow = npoints*nstartbt, ncol = 2+nyr+1) 
+  npointsmem = dim(inmemorytable)[1]
+  npointscols = dim(inmemorytable)[2]
+  #reconstruction of the processing matrix after the parallel search
+  if (npointsmem>0 && npointscols>0){
+   for (idxr in 1:npointsmem){
+        i = inmemorytable[idxr,1]
+        if (!is.na(i)){
+          j = inmemorytable[idxr,2]
+          mdatindex<-((i-1)*nstartbt)+which(startbt==j)  
+          mdat[mdatindex,1]           <- inmemorytable[idxr,3]
+          mdat[mdatindex,2]           <- inmemorytable[idxr,4]
+          mdat[mdatindex,3:(2+nyr+1)] <- inmemorytable[idxr,5:(4+nyr+1)]
+          if(pt==T) points(x=ri[i], y=ki[i], pch=".", cex=4, col="gray")
+        }
     }
-    # instruction necessary to make the foreach loop see the variable:
-    inmemorytable<-biomass[drop=FALSE]
-  }#end parallelization
-  
-  if(pt){if(length(inmemorytable[,1])>0){ points(x=inmemorytable[,1], y=inmemorytable[,2], pch=".", cex=4, col="gray")}}
-  return(inmemorytable)
+  }
+  ptm<-proc.time()-ptm
+  mdat <- na.omit(mdat)
+  return(mdat)
 }
+
+SchaeferMC <- function(ri, ki, startbio, int.yr, intbio, endbio, sigR, pt, duncert, startbins, ni) {
+  
+  # create vector for initial biomasses
+  startbt     <- seq(from =startbio[1], to=startbio[2], by = (startbio[2]-startbio[1])/startbins)
+  nstartbt    <- length(startbt)
+  npoints     <- length(ri)
+  # get index of intermediate year
+  int.yr.i     <- which(yr==int.yr) 
+  
+  #loop through r-k pairs with parallel search
+  mdat<-SchaeferParallelSearch(ni, nyr,sigR,duncert,ct,int.yr,intbio, startbt, ki, i, ri, int.yr.i, nstartbt, yr, end.yr, endbio, npoints,pt)
+
+  cat("\n")
+  return(list(mdat))
+} # end of SchaeferMC function
 
 #-----------------------------------------------
 # Function for moving average
@@ -133,13 +185,6 @@ ma    <- function(x){
   x.1[2] <- (x[1]+x[2])/2
   return(x.1)
 }
-
-#-----------------------------------------------
-# Function drawing bounded random normal
-#-----------------------------------------------
-rtnorm<-function(n,mean.val=0,sd.val=1,min.val=-3,max.val=3)
-{vals<-mean.val+(qnorm(runif(n,pnorm((min.val-mean.val)/sd.val),pnorm((max.val-mean.val)/sd.val))))*sd.val}
-
 #---------------------------------------------
 # END OF FUNCTIONS
 #---------------------------------------------
@@ -168,7 +213,7 @@ if(write.output==T){
                           "sel_B","sel_B_Bmsy","sel_F","sel_F_Fmsy",
                           "c00","c01","c02","c03","c04","c05","c06","c07","c08","c09","c10","c11","c12","c13","c14","c15",
                           "F.Fmsy00","F.Fmsy01","F.Fmsy02","F.Fmsy03","F.Fmsy04","F.Fmsy05","F.Fmsy06","F.Fmsy07","F.Fmsy08","F.Fmsy09","F.Fmsy10","F.Fmsy11","F.Fmsy12","F.Fmsy13","F.Fmsy14","F.Fmsy15",
-                          "B00","B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12","B13","B14","B15","Runtime","total.num.samples","st.bio1.ext","st.bio2.ext","int.bio1.ext","int.bio2.ext","end.bio1.ext","end.bio2.ext")
+                          "B00","B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12","B13","B14","B15","Runtime","total.num.samples")
  
    write.table(outheaders,file=outfile, append = T, sep=",",row.names=F,col.names=F)
 }
@@ -185,9 +230,7 @@ if(is.na(stocks[1])==TRUE){
 }
 
 # analyze one stock after the other
-
 for(stock in stocks) {
-  set.seed(12345)
   cat("Processing",stock,",", as.character(cinfo$ScientificName[cinfo$Stock==stock]),"\n")
   # assign data from cinfo to vectors
   res          <- as.character(cinfo$Resilience[cinfo$Stock==stock])
@@ -240,7 +283,7 @@ for(stock in stocks) {
   ct              <- ma(ct.raw)
 
   # initialize vectors for viable r, k, bt, and all in a matrix
-  mdat.all    <- matrix(data=vector(),ncol=2*nyr+3)
+  mdat.all    <- matrix(data=vector(),ncol=2+nyr+1)
   
   # initialize other vectors anew for each stock
   current.attempts <- NA
@@ -322,47 +365,21 @@ for(stock in stocks) {
   } # end of final biomass setting
   
   # initial prior range of k values, assuming min k will be larger than max catch / prior for r 
-  mean.sp  <- mean(c(startbio,intbio,intbio,endbio))*(1-mean(c(startbio,intbio,intbio,endbio)))
-  kr.guess <- sum(ct)/max(0.01,((mean(startbio)-mean(endbio))/mean(start.r)+length(ct)*mean.sp))
-  if(startbio[2]>endbio[1]){
-    kr.min <- sum(ct)/max(0.01,((startbio[2]-endbio[1])/start.r[1]+length(ct)*0.25))
-  }else{
-    kr.min <- sum(ct)/max(0.01,((startbio[2]-endbio[1])/start.r[2]+length(ct)*0.25))
-  }
-  if(startbio[1]>endbio[2]){
-    kr.max <- sum(ct)/max(0.01,((startbio[1]-endbio[2])/start.r[2]+length(ct)*0.5*mean.sp))
-  }else{
-    kr.max <- sum(ct)/max(0.01,((startbio[1]-endbio[2])/start.r[1]+length(ct)*0.5*mean.sp))
-  }
-  start.k<-c(kr.min,kr.max)
+  if(mean(endbio) <= 0.5) {
+    start.k <- c(max(ct)/start.r[2],4*max(ct)/start.r[1])} else {
+      start.k <- c(2*max(ct)/start.r[2],12*max(ct)/start.r[1])} 
   # start.k <- c(start.k[1],3000)   
   cat("startbio=",startbio,ifelse(is.na(stb.low)==T,"default","expert"),
       ", intbio=",int.yr,intbio,ifelse(is.na(intb.low)==T,"default","expert"),
       ", endbio=",endbio,ifelse(is.na(endb.low)==T,"default","expert"),"\n")
   
-  start.r.new<-start.r
-  ct.est <- ct
   time.start<-proc.time()[3]
-  base.bio.bounds<-matrix(rep(c(0.01,1),(length(ct)+1)),nrow=2)
-  base.bio.bounds[,1]<-startbio
-  base.bio.bounds[,which(yr==int.yr)]<-intbio
-  base.bio.bounds[,(length(ct)+1)]<-endbio
-  extended.bounds<-matrix(rep(c(0.9,0.9),(length(ct)+1)),nrow=2)
-  extended.bounds[,1]<-c(1,1)
-  extended.bounds[,which(yr==int.yr)]<-c(1,1)
-  extended.bounds[,(length(ct)+1)]<-c(1,1)
-  bio.bounds<-base.bio.bounds
-  bio.bounds[1,]<-base.bio.bounds[1,]*extended.bounds[1,]
-  bio.bounds[2,]<-(base.bio.bounds[2,]-1)*extended.bounds[2,]+1
-  bound.reduce<-c(10,10,10,10,10,20,20,20,20,20,30,30,30,30,30,40,40,40,40,40,50)
-  #(ri, ki, bi, ct, ct.est, bound.bio, sigR, duncert, pt)
   #------------------------------------------------------------------
   # Uniform sampling of the r-k space
   #------------------------------------------------------------------
-  # get random set of r and k 
-  ri1 <- exp(runif(n, log(start.r[1]), log(start.r[2])))  
-  ki1 <- rtnorm(n, kr.guess, (kr.max-kr.min)/4, kr.min, kr.max)/ri1 
-  bi1  <- runif(length(ri1),bio.bounds[1,1],bio.bounds[2,1])
+  # get random set of r and k from log space distribution 
+  ri1 = exp(runif(n, log(start.r[1]), log(start.r[2])))  
+  ki1 = exp(runif(n, log(start.k[1]), log(start.k[2])))  
   
   #-----------------------------------------------------------------
   # Plot data and progress
@@ -380,139 +397,72 @@ for(stock in stocks) {
   points(x=yr[min.yr.i], y=min.ct, col="red", lwd=2)
 
   # plot r-k graph
-  plot(x=ri1, y=ki1, xlim = start.r, ylim = c((kr.min/start.r[2]),(kr.max/start.r[1])), log="xy", xlab="r", ylab="k", 
+  plot(x=ri1, y=ki1, xlim = start.r, ylim = start.k, log="xy", xlab="r", ylab="k", 
        main="B: Finding viable r-k", pch=".", cex=3, bty="l", col="gray95")
 
   #---------------------------------------------------------------------
   # 1 - Call CMSY-SchaeferMC function to preliminary explore the r-k space
   #---------------------------------------------------------------------
   cat("First Monte Carlo filtering of r-k space with ",n," points...\n")
-  MCA <-  SchaeferMC(ri=ri1, ki=ki1, bi=bi1, ct=ct, ct.est=ct.est, 
-                     bio.bounds=bio.bounds, sigR=sigR, duncert=dataUncert, pt=T)
-  mdat.all <- rbind(mdat.all,MCA)
+  MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
+                     pt=T, duncert=dataUncert, startbins=10, ni=ni)
+  mdat.all <- rbind(mdat.all,MCA[[1]])
   rv.all   <- mdat.all[,1]
   kv.all   <- mdat.all[,2]
-  btv.all  <- mdat.all[,3:(2+nyr+1),drop=FALSE]
-  ctv.all  <- mdat.all[,(nyr+4):(2*nyr+3),drop=FALSE]
+  btv.all  <- mdat.all[,3:(2+nyr+1)]
   # count viable trajectories and r-k pairs 
   n.viable.b   <- length(mdat.all[,1])
   n.viable.pt <- length(unique(mdat.all[,1]))
   cat("Found ",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
   
+  #----------------------------------------------------------------------- 
+  # 2 - if the lower bound of k is too high, reduce it by half and rerun
+  #-----------------------------------------------------------------------
+  if(length(kv.all[kv.all < 1.1*start.k[1] & rv.all < mean(start.r)]) > 10) {
+    cat("Reducing lower bound of k, resampling area with",n,"additional points...\n")
+    start.k <- c(0.5*start.k[1],start.k[2])
+    ri1 = exp(runif(n, log(start.r[1]), log(start.r[2])))  
+    ki1 = exp(runif(n, log(start.k[1]), log(start.k[2])))  
+    MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
+                       pt=T, duncert=dataUncert, startbins=10, ni=ni)
+    mdat.all <- rbind(mdat.all,MCA[[1]])
+    rv.all   <- mdat.all[,1]
+    kv.all   <- mdat.all[,2]
+    btv.all  <- mdat.all[,3:(2+nyr+1)]
+    n.viable.b   <- length(mdat.all[,1])
+    n.viable.pt <- length(unique(mdat.all[,1]))
+    cat("Found altogether",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
+  }
+  
   #-------------------------------------------------------------------
-  # 2 - if few points were found then resample and shrink the log k space
+  # 3 - if few points were found then resample and shrink the log k space
   #-------------------------------------------------------------------
-  current.attempts <- 1
-  max.attempts     <- max.iters
-  while ((current.attempts <= 1 | n.viable.b <= 1000 ) && current.attempts <= max.attempts)
-  {
-      startbio.ratio<-(bio.bounds[2,1]-bio.bounds[1,1])/(base.bio.bounds[2,1]-base.bio.bounds[1,1])
-      n.new <- n*current.attempts*startbio.ratio #add more points
-      
-      if(n.viable.b > 0) 
-      {
-        ct.est <- ctv.all[ceiling(runif(1,0,length(ctv.all[,1]))),]
-        b.quant <-  quantile(btv.all[,1],c(0,0.5,1))
-        b.range <-  b.quant[3]-b.quant[1]
-        bi1     <-  rtnorm(length(ri1),b.quant[2],(b.range*0.8+0.2)/4,max((b.quant[1]*0.8-0.2*b.range),bio.bounds[1,1]),min((b.quant[3]*1.2+0.2*b.range),bio.bounds[2,1]))
-        
-        if(n.viable.b > 20)
-        {
-          base.bio.bounds[,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<-apply(btv.all[,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct))),drop=FALSE],2,range)
-          bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<- base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]*extended.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]
-          bio.bounds[2,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<- (base.bio.bounds[2,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]-1)*extended.bounds[2,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]+1
-          
-          r.quant         <-  quantile(rv.all,c(0,0.1,0.2,0.5,0.8,0.9,1))
-          r.quant.log     <-  log(r.quant)
-          
-          start.r.new <- c(max(start.r[1],0.75*min(rv.all)),min(start.r[2],1.5*max(rv.all)))
-          log.ri1<-runif(n.new, log(start.r.new[1]), log(start.r.new[2]))
-          
-          mean.k1      <-  log(mean(kv.all[rv.all<=r.quant[3]]))
-          start.k1     <-  c(log(min(kv.all[rv.all<=r.quant[3]])),log(max(kv.all[rv.all<=r.quant[3]])))
-          range.k1     <-  start.k1[2]-start.k1[1]
-          start.k1[1]  <-  start.k1[1]-0.2*range.k1
-          start.k1[2]  <-  start.k1[2]+0.2*range.k1
-          
-          mean.k3      <-  log(mean(kv.all[rv.all>=r.quant[5]]))
-          start.k3     <-  c(log(min(kv.all[rv.all>=r.quant[5]])),log(max(kv.all[rv.all>=r.quant[5]])))
-          range.k3     <-  start.k3[2]-start.k3[1]
-          start.k3[1]  <-  start.k3[1]-0.2*range.k3
-          start.k3[2]  <-  start.k3[2]+0.2*range.k3
-          
-          
-          ki1.mean <- (mean.k1+(mean.k3-mean.k1)*((log.ri1-r.quant.log[2])/(r.quant.log[6]-r.quant.log[2])))
-          ki1.mean <- ifelse(ki1.mean<0.01*mean.k3,0.01*mean.k3,ki1.mean)
-          ki1.min  <- (start.k1[1]+(start.k3[1]-start.k1[1])*((log.ri1-r.quant.log[3])/(r.quant.log[7]-r.quant.log[3])))
-          ki1.min  <- ifelse(ki1.min>0.99*ki1.mean,0.99*ki1.mean,ki1.min)
-          ki1.max  <- (start.k1[2]+(start.k3[2]-start.k1[2])*((log.ri1-r.quant.log[1])/(r.quant.log[5]-r.quant.log[1])))
-          ki1.max  <- ifelse(ki1.max<1.01*ki1.mean,1.01*ki1.mean,ki1.max)
-          ki1.sd   <- (ki1.max - ki1.min)/4
-          
-          ri1  <- exp(log.ri1)
-          ki1  <- exp(rtnorm(length(ri1), ki1.mean, ki1.sd, ki1.min, ki1.max))
-          start.k <- c(exp(ki1.min)*start.r[1],exp(ki1.max)*start.r[2])
-          }else{
-          start.k <- c(0.8*min(kv.all*rv.all),1.2*max(kv.all*rv.all))
-          start.r.new <- c(max(start.r[1],0.8*min(rv.all)),min(start.r[2],1.2*max(rv.all)))
-          ri1<-exp(runif(n.new, log(start.r.new[1]), log(start.r.new[2])))
-          ki1 = rtnorm(n.new, mean(kv.all*rv.all)/ri1, (start.k[2]/ri1-start.k[1]/ri1)/3.92, start.k[1]/ri1, start.k[2]/ri1)
-          
-          base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<-apply(btv.all[,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct))),drop=FALSE],2,mean)
-          bio.bounds[2,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<- 2*base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]-base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]^2
-          bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]<- base.bio.bounds[1,c(2:(which(yr==int.yr)-1),(which(yr==int.yr)+1):(length(ct)))]^2
-        }}else{
-        if(current.attempts==4 | current.attempts==8 | current.attempts==12 | current.attempts==16)
-        {kr.min   <- 0.8*kr.min
-        kr.max   <- 1.2*kr.max}
-        ri1<-exp(runif(n.new, log(start.r[1]), log(start.r[2])))
-        ki1 = rtnorm(n.new, kr.guess/ri1, (kr.max-kr.min)/(ri1*4), kr.min/ri1, kr.max/ri1) 
-        start.k<-c(kr.min,kr.max)
-        bi1  <- runif(length(ri1),(bio.bounds[1,1]),(bio.bounds[2,1]))
-      }
-      
-      cat("Shrinking k space: repeating Monte Carlo in the interval [",(start.k[1]/start.r[2]),",",(start.k[2]/start.r[1]),"]\n")
+  if (n.viable.b <= 1000){
+    log.start.k.new  <- log(start.k) 
+    max.attempts     <- 3
+    current.attempts <- 1
+    startbins        <- 10  
+    while (n.viable.b <= 1000 && current.attempts <= max.attempts){
+      if(n.viable.pt > 0) {
+        log.start.k.new[1] <- mean(c(log(start.k[1]), min(log(kv.all))))
+        log.start.k.new[2] <- mean(c(log.start.k.new[2], max(log(kv.all)))) }
+      n.new <- n*current.attempts #add more points
+      ri1 = exp(runif(n.new, log(start.r[1]), log(start.r[2])))  
+      ki1 = exp(runif(n.new, log.start.k.new[1], log.start.k.new[2]))
+      cat("Shrinking k space: repeating Monte Carlo in the interval [",exp(log.start.k.new[1]),",",exp(log.start.k.new[2]),"]\n")
       cat("Attempt ",current.attempts," of ",max.attempts," with ",n.new," additional points...","\n")
-      
-      MCA <-  SchaeferMC(ri=ri1, ki=ki1, bi=bi1, ct=ct, ct.est=ct.est, 
-                         bio.bounds=bio.bounds, sigR=sigR, duncert=dataUncert, pt=T)
-      mdat.all <- rbind(mdat.all,MCA)
-      
-      if(current.attempts==6 | current.attempts==12){
-        reduce.bound<-min(bound.reduce[current.attempts],max(0.5*n.viable.b,10))
-        if(n.viable.b < 5 | n.viable.b > reduce.bound)
-        {for(i in c(1,which(yr==int.yr),(length(ct)+1)))
-        {
-          if(n.viable.b < 5)
-          {
-            extended.bounds[,i]<-(extended.bounds[,i]-0.24)
-            bio.bounds[1,i]<-base.bio.bounds[1,i]*extended.bounds[1,i]
-            bio.bounds[2,i]<-(base.bio.bounds[2,i]-1)*extended.bounds[2,i]+1
-            duncert   <- 1.2*dataUncert
-            sigR      <- 1.2*sigmaR
-            cat("Removing bounds on depletion \n")  
-          }else if(n.viable.b > reduce.bound){
-            if(extended.bounds[1,i]<1)
-            { temp<-extended.bounds[1,i]+0.24
-              temp.bio.bound<-base.bio.bounds[1,i]*temp
-              if(length(mdat.all[mdat.all[,(2+i)]>=temp.bio.bound,1])>=(reduce.bound))
-              { mdat.all <- mdat.all[mdat.all[,(2+i)]>=temp.bio.bound,,drop=FALSE]
-                extended.bounds[1,i]<-temp
-                bio.bounds[1,i]<-temp.bio.bound}}
-            
-            if(extended.bounds[2,i]<1)
-            { temp<-extended.bounds[2,i]+0.24
-              temp.bio.bound<-(base.bio.bounds[2,i]-1)*temp+1 
-              if(length(mdat.all[mdat.all[,(2+i)]<=temp.bio.bound,1])>=(reduce.bound))
-              { mdat.all <- mdat.all[mdat.all[,(2+i)]<=temp.bio.bound,,drop=FALSE]
-                extended.bounds[2,i]<-temp
-                bio.bounds[2,i]<-temp.bio.bound}}
-          }}}}
-      
+      if(current.attempts==2 & n.viable.b < 50){
+        duncert   <- 2*dataUncert
+        sigR      <- 2*sigmaR
+        startbins <- 20
+        cat("Doubling startbins, catch and process error, and number of variability patterns \n")   
+      }
+      MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
+                         pt=T, duncert=duncert, startbins=startbins, ni=2*ni)
+      mdat.all <- rbind(mdat.all,MCA[[1]])
       rv.all   <- mdat.all[,1]
       kv.all   <- mdat.all[,2]
-      btv.all  <- mdat.all[,3:(2+nyr+1),drop=FALSE]
-      ctv.all  <- mdat.all[,(nyr+4):(2*nyr+3),drop=FALSE]
+      btv.all  <- mdat.all[,3:(2+nyr+1)]
       n.viable.b   <- length(mdat.all[,1])
       n.viable.pt <- length(unique(mdat.all[,1]))
       cat("Found altogether",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
@@ -522,16 +472,33 @@ for(stock in stocks) {
       cat("Only",n.viable.pt,"viable r-k pairs found, check data and settings \n")
       next
     }  
+  }
   
+  #------------------------------------------------------------------
+  # 4 - if tip of viable r-k pairs is 'thin', do extra sampling there
+  #------------------------------------------------------------------
+  if(length(rv.all[rv.all > 0.9*start.r[2]]) < 5) { 
+    l.sample.r        <- quantile(rv.all,0.6)
+    add.points        <- ifelse(is.na(current.attempts)==T,n,ifelse(current.attempts==2,2*n,ifelse(length(rv.all)>500,3*n,6*n)))
+    cat("Final sampling in the tip area above r =",l.sample.r,"with",add.points,"additional points...\n")
+    log.start.k.new <- c(log(0.8*min(kv.all)),log(max(kv.all[rv.all > l.sample.r])))
+    
+    ri1 = exp(runif(add.points, log(l.sample.r), log(start.r[2])))  
+    ki1 = exp(runif(add.points, log.start.k.new[1], log.start.k.new[2]))
+    MCA <-  SchaeferMC(ri=ri1, ki=ki1, startbio=startbio, int.yr=int.yr, intbio=intbio, endbio=endbio, sigR=sigR, 
+                       pt=T, duncert=duncert, startbins=10, ni=ni)
+    mdat.all <- rbind(mdat.all,MCA[[1]])
+    rv.all   <- mdat.all[,1]
+    kv.all   <- mdat.all[,2]
+    btv.all  <- mdat.all[,3:(2+nyr+1)]
+    n.viable.b   <- length(mdat.all[,1])
+    n.viable.pt <- length(unique(mdat.all[,1]))
+    cat("Found altogether",n.viable.b," viable trajectories for", n.viable.pt," r-k pairs\n")
+  }
+
   time.end<-proc.time()[3]
   test.runtime<-(time.end-time.start)
   
-  #plot(btv.all[1,],ylim=c(min(btv.all),max(btv.all)))
-  #for(i in 1:length(btv.all[,1])){lines(btv.all[i,])}
-  #plot(ctv.all[1,],ylim=c(min(ctv.all),max(ctv.all)))
-  #for(i in 1:length(ctv.all[,1])){lines(ctv.all[i,])}
-  #lines(ct,col="red")
-  #plot(rv.all,kv.all)
   # ------------------------------------------------------------------
   # Bayesian analysis of catch & biomass (or CPUE) with Schaefer model
   # ------------------------------------------------------------------
@@ -861,7 +828,7 @@ ucl.MSY.est     <- exp(ucl.log.MSY.est)
 # get predicted biomass vectors as median and quantiles 
 # only use biomass trajectories from r-k pairs within the confidence limits
 rem.btv.all <- mdat.all[which(mdat.all[,1] > lcl.r.est & mdat.all[,1] < ucl.r.est 
-                              & mdat.all[,2] > lcl.k.est & mdat.all[,2] < ucl.k.est),3:(2+nyr+1),drop=FALSE]
+                              & mdat.all[,2] > lcl.k.est & mdat.all[,2] < ucl.k.est),3:(2+nyr+1)]
 median.btv <- apply(rem.btv.all,2, median)
 median.btv.lastyr  <- median.btv[length(median.btv)-1]
 nextyr.bt  <- median.btv[length(median.btv)]
@@ -1304,8 +1271,7 @@ if(write.output == TRUE) {
                       F.Fmsy.ext[yr.ext==2011],F.Fmsy.ext[yr.ext==2012],F.Fmsy.ext[yr.ext==2013],F.Fmsy.ext[yr.ext==2014],F.Fmsy.ext[yr.ext==2015],
                       B.ext[yr.ext==2000],B.ext[yr.ext==2001],B.ext[yr.ext==2002],B.ext[yr.ext==2003],
                       B.ext[yr.ext==2004],B.ext[yr.ext==2005],B.ext[yr.ext==2006],B.ext[yr.ext==2007],B.ext[yr.ext==2008],B.ext[yr.ext==2009],B.ext[yr.ext==2010],
-                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015],
-                      test.runtime,length(mdat.all[,1]),extended.bounds[1,1],extended.bounds[2,1],extended.bounds[1,which(yr==int.yr)],extended.bounds[2,which(yr==int.yr)],extended.bounds[1,(length(ct)+1)],extended.bounds[2,(length(ct)+1)]) 
+                      B.ext[yr.ext==2011],B.ext[yr.ext==2012],B.ext[yr.ext==2013],B.ext[yr.ext==2014],B.ext[yr.ext==2015],test.runtime,length(mdat.all[,1])) 
   
   write.table(output, file=outfile, append = T, sep = ",", 
               dec = ".", row.names = FALSE, col.names = FALSE)
